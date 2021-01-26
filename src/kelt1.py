@@ -8,6 +8,7 @@ from numpy.random.mtrand import permutation
 from scipy.ndimage import median_filter
 
 from astropy.stats import sigma_clip, mad_std
+from astropy.table import Table
 from pytransit import EclipseModel, BaseLPF, LinearModelBaseline
 from pytransit.lpf.loglikelihood import CeleriteLogLikelihood
 from pytransit.param import GParameter, PParameter, NormalPrior as NP, UniformPrior as UP
@@ -31,18 +32,24 @@ k2 = ufloat(0.005935, 4.468e-5)
 # Utility functions
 # -----------------
 
-def get_data_files(datadir: Path = 'data'):
-    return sorted(Path(datadir).glob('*.rdb'))
+def get_visits(datadir: Path = 'data'):
+    return sorted(Path(datadir).glob('PR??????_TG??????_V????'))
 
 
-def read_data_file(fname):
-    df = pd.read_csv(fname, sep='\t', )
-    df = df.iloc[3:]
-    df = df['obj_date_bjd_vect photom_flux_vect photom_flux_vect_err photom_centroid_x_vect photom_centroid_y_vect photom_roll_angle_vect photom_background_vect'.split()]
-    df.columns = 'time flux flux_err centroid_x centroid_y roll_angle background'.split()
-    df = df.astype('d')
-    df.time += 2400000
-    df.roll_angle = radians(df.roll_angle)
+def read_visit(visit: Path, kind: str = 'optimal'):
+    try:
+        lcfile = list(visit.glob(f'*Lightcurve*{kind.upper()}*.fits'))[0]
+    except IndexError:
+        print(f"Could not find '{kind}' light curve.")
+        return None
+    
+    cvfile = list(visit.glob(f'*HkCe-SubArray*.fits'))[0]
+    lcd = Table.read(lcfile).to_pandas()
+    lcd.columns = [c.lower() for c in lcd.columns]
+    lcd = lcd['bjd_time flux fluxerr status dark background conta_lc smearing_lc roll_angle centroid_x centroid_y'.split()]
+    cvd = Table.read(cvfile).to_pandas()
+    cvd.columns = [c.lower() for c in cvd.columns]
+    df = pd.merge(lcd, cvd.iloc[:,11:], left_index=True, right_index=True)
     return df
 
 
@@ -55,12 +62,16 @@ def clean_data(dfo):
 
     mf = median_filter(df.flux, 5)
 
+    mask_status = df.status == 0
+    df.drop(columns=['status'], inplace=True)
+    df = df.astype('d')
+    
     mask_bckg = ~sigma_clip(df.background, sigma=5, stdfunc=mad_std).mask
     bckg_mf = median_filter(df.background[mask_bckg], 5)
     mask_bckg[mask_bckg] &= ~sigma_clip(df.background[mask_bckg] - bckg_mf, 3).mask
 
     mask_drdt = ones(df.shape[0], bool)
-    drdt = diff(df.roll_angle) / diff(df.time)
+    drdt = diff(df.roll_angle) / diff(df.bjd_time)
     mask_drdt[1:] = ~sigma_clip(drdt, 10, stdfunc=mad_std).mask
 
     mask = mask_drdt & mask_bckg
@@ -68,21 +79,22 @@ def clean_data(dfo):
     mf = median_filter(df.flux[mask], 5)
     mask[mask] &= ~sigma_clip(df.flux[mask] - mf, 4).mask
 
-    time, flux = df.time.values[mask], df.flux.values[mask]
-
-    cov = df.drop(columns=['flux', 'flux_err']).values[mask]
+    time, flux = df.bjd_time.values[mask], df.flux.values[mask]
+    flux /= median(flux)
+    
+    cov = df.drop(columns=['flux', 'fluxerr']).values[mask]
     cov = ((cov - cov.mean(0)) / cov.std(0))
     return time, flux, cov
 
 
-def read_data(visits=None):
-    data_files = get_data_files()
+def read_data(visits = None):
+    visit_dirs = get_visits()
     if isinstance(visits, int):
         visits = [visits]
-    visits = visits if visits is not None else range(1, len(data_files) + 1)
+    visits = visits if visits is not None else range(1, len(visit_dirs) + 1)
     time, flux, cov = [], [], []
     for i in visits:
-        df = read_data_file(data_files[i - 1])
+        df = read_visit(visit_dirs[i - 1])
         t, f, c = clean_data(df)
         time.append(t)
         flux.append(f)
