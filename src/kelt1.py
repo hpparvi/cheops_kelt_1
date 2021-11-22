@@ -1,17 +1,44 @@
 from pathlib import Path
 
 import pandas as pd
+import xarray as xa
+
 from astropy.stats import sigma_clip, mad_std
 from astropy.table import Table
 from matplotlib.pyplot import bar, axhline
-from numpy import sin, cos, diff, ones, median, argmin, array, arange
+from numpy import sin, cos, diff, ones, median, argmin, array, arange, sqrt
 from scipy.ndimage import median_filter
 from uncertainties import ufloat
+import astropy.units as u
 
-# Planetary parameters
+from ldtk import LDPSetCreator, SVOFilter
+
+AAOCW, AAPGW = 3.4645669, 7.0866142
+
+def read_mcmc(filename):
+    with xa.load_dataset(filename) as ds:
+        chain = ds['mcmc_samples'].data.reshape([-1, ds.parameter.size])
+        df = pd.DataFrame(chain, columns=ds.parameter)
+        df['k'] = sqrt(df.k2)
+        return df
+
+filters = (SVOFilter('CHEOPS/CHEOPS.band'), SVOFilter('TESS'),
+           SVOFilter('LBT/LUCIFER.H_4302'), SVOFilter('CFHT/Wircam.Ks'),
+           SVOFilter('Spitzer/IRAC.I1'), SVOFilter('Spitzer/IRAC.I2'))
+
+filter_names = "CHEOPS TESS H Ks S1 S2".split()
+
+mj2kg = u.M_jup.to(u.kg)
+ms2kg = u.M_sun.to(u.kg)
+d2s = u.day.to(u.s)
+
+# KELT-1b parameters
 # --------------------
-zero_epoch = t0 = ufloat(2458765.53370, 0.00016)
-period = ufloat(1.2174928, 1.7e-6)
+kelt1_m =  ufloat(27.38, 0.93)  # KELT-1b mass in M_Jup
+
+zero_epoch = ufloat(2455914.1628, 0.0023)  # Siverd et al. (2012)
+period = ufloat(1.217513, 0.000015)        # Siverd et al. (2012)
+
 b = ufloat(0.195, 0.05)
 k2 = ufloat(0.005935, 4.468e-5)
 
@@ -23,10 +50,18 @@ star_logg = ufloat(4.228,  0.02)
 star_z    = ufloat(0.052,  0.079)
 star_r    = ufloat(1.471, 0.045)
 star_m    = ufloat(1.335, 0.063)
-star_rho  = ufloat(0.58, 0.05)
+star_rho  = rho = ufloat(0.58, 0.05)
+
+# Doppler beaming amplitudes
+# --------------------------
+beaming_amplitudes = {n:a for n,a in zip(filter_names, array([6.3e-05, 4.1e-05, 2.5e-05, 1.9e-05, 1.7e-05, 1.6e-05]))}
+beaming_uncertainties = {n:a for n,a in zip(filter_names, array([3.2e-06, 2.1e-06, 1.3e-06, 9.2e-07, 8.3e-07, 7.9e-07]))}
 
 # Utility functions
 # -----------------
+
+rootdir = Path(__file__).parent.parent
+datadir = rootdir / 'data'
 
 def bplot(c):
     qs = c.quantile([0.16, 0.84, 0.025, 0.975, 0.0015, 0.9985, 0.49, 0.51])
@@ -38,7 +73,7 @@ def bplot(c):
     axhline(0, c='k')
 
 
-def get_visits(datadir: Path = 'data'):
+def get_visits(datadir: Path = datadir):
     return sorted(Path(datadir).glob('PR??????_TG??????_V????'))
 
 
