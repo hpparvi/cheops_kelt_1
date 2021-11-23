@@ -1,10 +1,11 @@
 import seaborn as sb
 from matplotlib.pyplot import subplots, setp
 from numpy import inf, repeat, arctan2, atleast_2d, sqrt, squeeze, linspace, \
-    median, percentile
+    median, percentile, argsort
 from numpy.random.mtrand import permutation
 from pytransit import EclipseModel, BaseLPF, LinearModelBaseline
 from pytransit.lpf.loglikelihood import LogisticLogLikelihood
+from pytransit.lpf.tesslpf import downsample_time
 from pytransit.orbits.orbits_py import as_from_rhop, i_from_ba
 from pytransit.param import GParameter, PParameter, NormalPrior as NP, UniformPrior as UP
 from pytransit.param.prior import LaplacePrior
@@ -45,12 +46,6 @@ class EclipseLPF(BaseLPF):
         self._start_fr = self.ps.blocks[-1].start
         self._sl_fr = self.ps.blocks[-1].slice
 
-    # def _init_lnlikelihood(self):
-    #    self._add_lnlikelihood_model(FrozenMultiCeleriteLogLikelihood(self))
-
-    #def _init_lnlikelihood(self):
-    #   self._add_lnlikelihood_model(CeleriteLogLikelihood(self))
-
     def _init_baseline(self):
         self._add_baseline_model(LinearModelBaseline(self))
 
@@ -71,7 +66,6 @@ class EclipseLPF(BaseLPF):
         for p in self.ps[self._sl_lm]:
             p.prior = LaplacePrior(p.prior.mean, p.prior.std)
 
-
     def transit_model(self, pv, copy=True, tm=None):
         tm = tm if tm is not None else self.tm
         pv = atleast_2d(pv)
@@ -89,34 +83,46 @@ class EclipseLPF(BaseLPF):
     def create_pv_population(self, npop):
         return self.ps.sample_from_prior(npop)
 
-    def plot_folded_eclipse_model(self, method: str = 'optimization', nsamples: int = 300):
+    def plot_folded_eclipse_model(self, method: str = 'optimization', nsamples: int = 300, binwidth: float = 0.01,
+                                  ylim=None):
         assert method in ('optimization', 'mcmc')
         tm = EclipseModel()
 
-        time_m = linspace(self.times[0][0], self.times[0][-1], 500)
+        t0, p = self.de.minimum_location[[0, 1]]
+        phasem = fold(self.timea, p, t0, normalize=False)
+        time_m = linspace(t0 + phasem.min(), t0 + phasem.max(), 500)
         tm.set_data(time_m - self._tref)
-
-        phaseo = fold(self.timea, period.n, t0.n, normalize=False)
-        phasem = fold(time_m, period.n, t0.n, normalize=False)
 
         fo = self.ofluxa
         if method == 'optimization':
-            fm = self.transit_model(self.de.minimum_location, tm=tm)
-            bl = self.baseline(self.de.minimum_location)
+            pv = self.de.minimum_location
+            fm = self.transit_model(pv, tm=tm)
+            bl = self.baseline(pv)
         else:
             df = self.posterior_samples(derived_parameters=False)
             pvs = permutation(df.values)[:nsamples]
+            pv = median(pvs, 0)
             fms = self.transit_model(pvs, tm=tm)
             bls = self.baseline(pvs)
             bl = median(bls, 0)
             fm, fmm, fmp = percentile(fms, [50, 2.5, 97.5], 0)
 
+        t0, p = pv[[0, 1]]
+        phaseo = fold(self.timea, p, t0, normalize=False)
+        phasem = fold(time_m, p, t0, normalize=False)
+
+        sids = argsort(phaseo)
+        pb, fb, eb = downsample_time(phaseo[sids], (fo / bl)[sids], binwidth)
+
         fig, ax = subplots()
+        ax.errorbar(24 * (pb - 0.5 * p), fb, eb, fmt='ok')
         for s in self.lcslices:
-            ax.plot(phaseo[s], fo[s] / bl[s], '.', alpha=0.5)
+            ax.plot(24 * (phaseo[s] - 0.5 * p), fo[s] / bl[s], 'k.', alpha=0.1)
         if method == 'mcmc':
-            ax.fill_between(phasem, fmm, fmp, alpha=0.5)
-        ax.plot(phasem, fm, 'k')
+            ax.fill_between(24 * (phasem - 0.5 * p), fmm, fmp, alpha=0.5)
+        ax.plot(24 * (phasem - 0.5 * p), fm, 'k')
+        ax.autoscale(enable=True, axis='x', tight=True)
+        setp(ax, xlabel='Time - T$_e$ [h]', ylabel='Normalised flux', ylim=ylim)
         fig.tight_layout()
         return fig
 
