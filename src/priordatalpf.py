@@ -15,7 +15,7 @@ from pytransit.orbits import epoch, fold
 from src.dataimport import load_tess, load_beatty_2017, load_spitzer, load_croll_2015
 from src.kelt1 import zero_epoch, period, beaming_amplitudes as ba, beaming_uncertainties as be
 
-ds = dict(lbt=2., croll=2., spitzer=2.)
+ds = dict(lbt=2., croll=2., spitzer=2., tess=None)
 
 class JointLPF(PhaseCurveLPF):
     def __init__(self, scenario: str, savedir: Path = Path('results'), downsampling = None):
@@ -42,7 +42,7 @@ class JointLPF(PhaseCurveLPF):
 
         # Load in the data
         # ----------------
-        tt, tf, tcov, tpb = load_tess()
+        tt, tf, tcov, tpb = load_tess(downsampling=ds['tess'])
         ht, hf, hcov, hpb = load_beatty_2017(downsampling=ds['lbt'])
         kt, kf, kcov, kpb = load_croll_2015(downsampling=ds['croll'])
         st, sf, scov, spb = load_spitzer(downsampling=ds['spitzer'], nleg=3)
