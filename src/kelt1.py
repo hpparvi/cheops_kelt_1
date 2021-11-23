@@ -52,6 +52,10 @@ star_r    = ufloat(1.471, 0.045)
 star_m    = ufloat(1.335, 0.063)
 star_rho  = rho = ufloat(0.58, 0.05)
 
+# Theoretical ellipsoidal variation amplitudes
+# --------------------------------------------
+ev_amplitudes = {n:a for n,a in zip(filter_names, [1e-6*ufloat(s) for s in "490+/-29 434+/-25 352+/-20 347+/-20 338+/-20 337+/-20".split()])}
+
 # Doppler beaming amplitudes
 # --------------------------
 beaming_amplitudes = {n:a for n,a in zip(filter_names, array([6.3e-05, 4.1e-05, 2.5e-05, 1.9e-05, 1.7e-05, 1.6e-05]))}
