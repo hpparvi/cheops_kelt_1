@@ -16,10 +16,12 @@ from src.kelt1 import read_tw_lightcurve, read_mcmc, beaming_amplitudes as ba, b
 
 class CHEOPSLPF(PhaseCurveLPF):
     def __init__(self, scenario: str, savedir: Path = Path('results')):
-        self.scenarios = 'a b c'.split()
+        self.scenarios = 'a b c d e'.split()
         self.labels = {'a': 'emission_reflection_and_constrained_ev',
                        'b': 'emission_and_constrained_ev',
-                       'c': 'emission_without_ev'}
+                       'c': 'emission_without_ev',
+                       'd': 'emission_unconstrained_ev',
+                       'e': 'emission_theoretical_ev'}
 
         if scenario not in self.scenarios:
             raise ValueError(f'The JointLPF scenario has to be one of {self.scenarios}')
@@ -67,6 +69,16 @@ class CHEOPSLPF(PhaseCurveLPF):
         elif self.scenario == 'c':
             self.set_prior('aev_cheops', 'NP', 1e-7, 1e-9)
             self.set_prior('adb_cheops', 'NP', 1e-7, 1e-9)
+            self.set_prior('ted_cheops', 'UP', 0.0, 0.2)
+            self.set_prior('ag_cheops', 'NP', 1e-4, 1e-6)
+        elif self.scenario == 'd':
+            self.set_prior('aev_cheops', 'NP', 1.128*df.aev_TESS.median(), 100e-6)
+            self.set_prior('adb_cheops', 'NP', ba['CHEOPS'], 2*be['CHEOPS'])
+            self.set_prior('ted_cheops', 'UP', 0.0, 0.2)
+            self.set_prior('ag_cheops', 'NP', 1e-4, 1e-6)
+        elif self.scenario == 'e':
+            self.set_prior('aev_cheops', 'NP', 490e-6, 29e-6)
+            self.set_prior('adb_cheops', 'NP', ba['CHEOPS'], 2*be['CHEOPS'])
             self.set_prior('ted_cheops', 'UP', 0.0, 0.2)
             self.set_prior('ag_cheops', 'NP', 1e-4, 1e-6)
 
