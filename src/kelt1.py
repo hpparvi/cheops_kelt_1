@@ -26,7 +26,7 @@ filters = (SVOFilter('CHEOPS/CHEOPS.band'), SVOFilter('TESS'),
            SVOFilter('LBT/LUCIFER.H_4302'), SVOFilter('CFHT/Wircam.Ks'),
            SVOFilter('Spitzer/IRAC.I1'), SVOFilter('Spitzer/IRAC.I2'))
 
-filter_names = "CHEOPS TESS H Ks S1 S2".split()
+filter_names = "CHEOPS TESS H Ks 36um 45um".split()
 
 mj2kg = u.M_jup.to(u.kg)
 ms2kg = u.M_sun.to(u.kg)
@@ -51,6 +51,22 @@ star_z    = ufloat(0.052,  0.079)
 star_r    = ufloat(1.471, 0.045)
 star_m    = ufloat(1.335, 0.063)
 star_rho  = rho = ufloat(0.58, 0.05)
+
+# Eclipse depths and flux ratios
+# ------------------------------
+edtessb = ufloat(371e-6, 50e-6)  # TESS band from beautty et al.
+edtesse = ufloat(304e-6, 75e-6)  # TESS band from von Essen et al.
+edh = ufloat(1418e-6, 94e-6)     # H-band from Beautty et al.
+edks = ufloat(1600e-6, 190e-6)   # Ks-band from Croll et al.
+eds1 = ufloat(1877e-6, 58e-6)    # Spitzer 3.6 um band from Beatty et al. (2019)
+eds2 = ufloat(2083e-6, 70e-6)    # Spitzer 4.5 um band from Beatty et al. (2019)
+
+frtessb = ufloat(0.0636, 0.0086)  # TESS band from Beatty et al.
+frtesse = ufloat(0.052, 0.013)    # TESS band from von Essen et al.
+frh = ufloat(0.243, 0.016)        # H-band from Beautty et al.
+frks = ufloat(0.274, 0.033)       # Ks-band from Croll et al.
+frs1 = ufloat(0.3218, 0.0099)     # Spitzer 3.6 um band from Beatty et al. (2019)
+frs2 = ufloat(0.357, 0.012)       # Spitzer 4.5 um band from Beatty et al. (2019)
 
 # Theoretical ellipsoidal variation amplitudes
 # --------------------------------------------

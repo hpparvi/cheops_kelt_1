@@ -12,16 +12,17 @@ from pytransit.param.prior import LaplacePrior
 from pytransit.utils.downsample import downsample_time_1d
 from pytransit.orbits import epoch, fold
 
-from src.kelt1 import read_tw_lightcurve, read_mcmc, beaming_amplitudes as ba, beaming_uncertainties as be
+from src.kelt1 import (read_tw_lightcurve, read_mcmc, beaming_amplitudes as ba, beaming_uncertainties as be,
+                       ev_amplitudes as eva)
 
 class CHEOPSLPF(PhaseCurveLPF):
     def __init__(self, scenario: str, savedir: Path = Path('results')):
         self.scenarios = 'a b c d e'.split()
-        self.labels = {'a': 'emission_reflection_and_constrained_ev',
+        self.labels = {'a': 'emission_and theoretical_ev',
                        'b': 'emission_and_constrained_ev',
-                       'c': 'emission_without_ev',
-                       'd': 'emission_unconstrained_ev',
-                       'e': 'emission_theoretical_ev'}
+                       'c': 'emission_and_unconstrained_ev',
+                       'd': 'emission_without_ev',
+                       'e': 'emission_and_reflection_theoretical_ev'}
 
         if scenario not in self.scenarios:
             raise ValueError(f'The JointLPF scenario has to be one of {self.scenarios}')
@@ -41,7 +42,7 @@ class CHEOPSLPF(PhaseCurveLPF):
         for p in self.ps[self._sl_lm]:
             p.prior = LaplacePrior(p.prior.mean, p.prior.std)
 
-        df = read_mcmc(self.result_dir / '01b_ext_emission_and_constrained_ev.nc')
+        df = read_mcmc(self.result_dir / '01a_ext_emission_and theoretical_ev.nc')
         self.set_prior('tc', 'NP', df.tc.median(), df.tc.std())
         self.set_prior('p', 'NP', df.p.median(), df.p.std())
         self.set_prior('rho', 'NP', df.rho.median(), df.rho.std())
@@ -56,31 +57,22 @@ class CHEOPSLPF(PhaseCurveLPF):
         self.set_prior('teo_cheops', 'NP', 0.0, 1e-7)
         self.set_prior('ten_cheops', 'NP', 1e-5, 1e-7)
 
+        self.set_prior('adb_cheops', 'NP', ba['CHEOPS'], 2 * be['CHEOPS'])
+        self.set_prior('ag_cheops', 'NP', 1e-4, 1e-6)
+        self.set_prior('ted_cheops', 'UP', 0.0, 0.2)
+
         if self.scenario == 'a':
-            self.set_prior('aev_cheops', 'NP', 1.128*df.aev_TESS.median(), 1.128*df.aev_TESS.std())
-            self.set_prior('adb_cheops', 'NP', ba['CHEOPS'], 2*be['CHEOPS'])
-            self.set_prior('ted_cheops', 'UP', 0.0, 0.2)
-            self.set_prior('ag_cheops', 'UP', 0.0, 2.0)
+            self.set_prior('aev_cheops', 'NP', eva['CHEOPS'].n, eva['CHEOPS'].s)
         elif self.scenario == 'b':
             self.set_prior('aev_cheops', 'NP', 1.128*df.aev_TESS.median(), 1.128*df.aev_TESS.std())
-            self.set_prior('adb_cheops', 'NP', ba['CHEOPS'], 2*be['CHEOPS'])
-            self.set_prior('ted_cheops', 'UP', 0.0, 0.2)
-            self.set_prior('ag_cheops', 'NP', 1e-4, 1e-6)
         elif self.scenario == 'c':
-            self.set_prior('aev_cheops', 'NP', 1e-7, 1e-9)
-            self.set_prior('adb_cheops', 'NP', 1e-7, 1e-9)
-            self.set_prior('ted_cheops', 'UP', 0.0, 0.2)
-            self.set_prior('ag_cheops', 'NP', 1e-4, 1e-6)
+            self.set_prior('aev_cheops', 'UP', 0.0, 1e-3)
         elif self.scenario == 'd':
-            self.set_prior('aev_cheops', 'NP', 1.128*df.aev_TESS.median(), 100e-6)
-            self.set_prior('adb_cheops', 'NP', ba['CHEOPS'], 2*be['CHEOPS'])
-            self.set_prior('ted_cheops', 'UP', 0.0, 0.2)
-            self.set_prior('ag_cheops', 'NP', 1e-4, 1e-6)
+            self.set_prior('aev_cheops', 'NP', 1e-9, 1e-11)
+            self.set_prior('adb_cheops', 'NP', 1e-9, 1e-11)
         elif self.scenario == 'e':
-            self.set_prior('aev_cheops', 'NP', 490e-6, 29e-6)
-            self.set_prior('adb_cheops', 'NP', ba['CHEOPS'], 2*be['CHEOPS'])
-            self.set_prior('ted_cheops', 'UP', 0.0, 0.2)
-            self.set_prior('ag_cheops', 'NP', 1e-4, 1e-6)
+            self.set_prior('aev_cheops', 'NP', eva['CHEOPS'].n, eva['CHEOPS'].s)
+            self.set_prior('ag_cheops', 'UP', 0.0, 1.0)
 
 
     def plot_folded_light_curve(self, figsize=None):

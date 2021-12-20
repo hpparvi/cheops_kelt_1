@@ -4,16 +4,18 @@ import seaborn as sb
 from pathlib import Path
 
 from matplotlib.pyplot import setp, subplots
-from numpy import radians, argsort, percentile, median, array
+from numpy import radians, argsort, percentile, median, array, ones, zeros, arange, concatenate
 from numpy.random import permutation
 
 from pytransit import LinearModelBaseline, NormalPrior as NP
+from pytransit.lpf.loglikelihood import WNLogLikelihood, CeleriteLogLikelihood
 from pytransit.lpf.phasecurvelpf import PhaseCurveLPF
 from pytransit.utils.downsample import downsample_time_1d
 from pytransit.orbits import epoch, fold
 
 from src.dataimport import load_tess, load_beatty_2017, load_spitzer, load_croll_2015
-from src.kelt1 import zero_epoch, period, beaming_amplitudes as ba, beaming_uncertainties as be
+from src.kelt1 import (zero_epoch, period, filter_names, beaming_amplitudes as ba, beaming_uncertainties as be,
+                       ev_amplitudes as eva,)
 
 ds = dict(lbt=2., croll=2., spitzer=2., tess=None)
 
@@ -24,14 +26,16 @@ class JointLPF(PhaseCurveLPF):
         This LPF models the TESS, LBT, and Spitzer data jointly.
 
         Scenarios:
-          a) Unconstrained emission and reflection + constrained ev
-          b) Zero albedo and unconstrained emission + constrained ev
-          c) Zero albedo and unconstarined emission + unconstrained ev
+          a) Zero albedo and unconstrained emission, EV amplitude constrained by a theoretical prior.
+          b) Zero albedo and unconstrained emission, EV amplitude constrained by a ratio prior.
+          c) Zero albedo and unconstarined emission, EV amplitude unconstrained
+          d) Unconstrained emission and reflection + constrained ev
         """
-        self.scenarios = 'a b c'.split()
-        self.labels = {'a': 'emission_reflection_and_constrained_ev',
+        self.scenarios = 'a b c d'.split()
+        self.labels = {'a': 'emission_and theoretical_ev',
                        'b': 'emission_and_constrained_ev',
-                       'c': 'emission_and_unconstrained_ev'}
+                       'c': 'emission_and_unconstrained_ev',
+                       'd': 'emission_and_reflection_and_theoretical_ev'}
 
         if scenario not in self.scenarios:
             raise ValueError(f'The JointLPF scenario has to be one of {self.scenarios}')
@@ -42,20 +46,28 @@ class JointLPF(PhaseCurveLPF):
 
         # Load in the data
         # ----------------
-        tt, tf, tcov, tpb = load_tess(downsampling=ds['tess'])
-        ht, hf, hcov, hpb = load_beatty_2017(downsampling=ds['lbt'])
-        kt, kf, kcov, kpb = load_croll_2015(downsampling=ds['croll'])
-        st, sf, scov, spb = load_spitzer(downsampling=ds['spitzer'], nleg=3)
+        tt, tf, tcov, tpb, tnids = load_tess(downsampling=ds['tess'])
+        ht, hf, hcov, hpb, hnids = load_beatty_2017(downsampling=ds['lbt'])
+        kt, kf, kcov, kpb, knids = load_croll_2015(downsampling=ds['croll'])
+        st, sf, scov, spb, snids = load_spitzer(downsampling=ds['spitzer'], nleg=3)
+
+        # Fix the noise IDs
+        # -----------------
+        hnids += 1+tnids[-1]
+        knids += 1+hnids[-1]
+        snids += 1+knids[-1]
 
         times = tt + ht + kt + st
         fluxes = tf + hf + kf + sf
         covs = tcov + hcov + kcov + scov
         pbs = pd.Categorical(tpb + hpb + kpb + spb, categories=['TESS', 'H', 'Ks', '36um', '45um'])
+        noise_ids = concatenate([tnids, hnids, knids, snids]) #arange(len(times))
 
         # Initialise the PhaseCurveLPF and add in a linear baseline model
         # ---------------------------------------------------------------
         name = f"01{self.scenario}_ext_{self.labels[self.scenario]}"
-        super().__init__(name, pbs.categories.values, times, fluxes, pbids=pbs.codes, covariates=covs, result_dir=savedir)
+        super().__init__(name, pbs.categories.values, times, fluxes, pbids=pbs.codes, covariates=covs,
+                         wnids=noise_ids, result_dir=savedir)
         self._add_baseline_model(LinearModelBaseline(self))
 
     def _post_initialisation(self):
@@ -71,6 +83,11 @@ class JointLPF(PhaseCurveLPF):
         self.set_prior('q2_36um', 'NP', 0.28, 0.0040)
         self.set_prior('q1_45um', 'NP', 0.02, 0.0004)
         self.set_prior('q2_45um', 'NP', 0.29, 0.0050)
+
+        self.set_prior('q1_H',  'NP', 0.5, 0.001)
+        self.set_prior('q2_H',  'NP', 0.5, 0.001)
+        self.set_prior('q1_Ks', 'NP', 0.5, 0.001)
+        self.set_prior('q2_Ks', 'NP', 0.5, 0.001)
 
         # Set the default phase curve priors
         # ----------------------------------
@@ -99,17 +116,17 @@ class JointLPF(PhaseCurveLPF):
         self.set_prior('adb_TESS', 'NP', ba['TESS'], 2*be['TESS'])
         self.set_prior('adb_H',    'NP', ba['H'],    2*be['H'])
         self.set_prior('adb_Ks',   'NP', ba['Ks'],   2*be['Ks'])
-        self.set_prior('adb_36um', 'NP', ba['S1'],   2*be['S1'])
-        self.set_prior('adb_45um', 'NP', ba['S2'],   2*be['S2'])
+        self.set_prior('adb_36um', 'NP', ba['36um'],   2*be['36um'])
+        self.set_prior('adb_45um', 'NP', ba['45um'],   2*be['45um'])
 
         # Set a prior on the geometric albedo
         # -----------------------------------
-        if self.scenario == 'a':
-            for pb in self.passbands:
-                self.set_prior(f'ag_{pb}', 'UP', 0.0, 2.0)
-        elif self.scenario == 'b' or self.scenario == 'c':
+        if self.scenario in 'abc':
             for pb in self.passbands:
                 self.set_prior(f'ag_{pb}', 'NP', 1e-4, 1e-6)
+        elif self.scenario == 'd':
+            for pb in self.passbands:
+                self.set_prior(f'ag_{pb}', 'UP', 0.0, 2.0)
 
         # Set a prior on ellipsoidal variation
         # ------------------------------------
@@ -118,21 +135,33 @@ class JointLPF(PhaseCurveLPF):
         # reference (TESS) passband. This ratio can
         # be estimated theoretically, as is done in
         # the "xxx" notebook.
-        if self.scenario in ("a", "b"):
+        if self.scenario in 'ad':
+            for pb in self.passbands:
+                self.set_prior(f'aev_{pb}', 'NP', eva[pb].n, eva[pb].s)
+        elif self.scenario == "b":
             pr_e_h = NP(0.81, 0.05)
             pr_e_ks = NP(0.80, 0.05)
             pr_e_s1 = NP(0.78, 0.10)
             pr_e_s2 = NP(0.78, 0.10)
-
             def ev_amplitude_prior(pvp):
                 h_ratio = pvp[:, 14] / pvp[:, 8]
                 ks_ratio = pvp[:, 20] / pvp[:, 8]
                 s1_ratio = pvp[:, 26] / pvp[:, 8]
                 s2_ratio = pvp[:, 32] / pvp[:, 8]
                 return pr_e_h.logpdf(h_ratio) + pr_e_ks.logpdf(ks_ratio) + pr_e_s1.logpdf(s1_ratio) + pr_e_s2.logpdf(s2_ratio)
-
             self.add_prior(ev_amplitude_prior)
+        elif self.scenario == 'c':
+            pass
 
+    # Define the log likelihood
+    # -------------------------
+    # We use a GP log likelihood for the TESS, LBT, and CFHT data and
+    # uncorrelated normal log likelihood for Spitzer else.
+    def _init_lnlikelihood(self):
+            self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[0]))  # TESS
+            self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[1]))  # LBT H
+            self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[2]))  # CFHT Ks
+            self._add_lnlikelihood_model(WNLogLikelihood(self, noise_ids=array([3,4,5,6])))
 
 def plot_joint_lcs(lpf, method='de', pv=None):
     yoff = 5e-3

@@ -8,7 +8,6 @@ from astropy.table import Table
 from numpy import isfinite, diff, ones, median, c_, array, concatenate, sqrt, full
 from numpy.polynomial.legendre import legvander
 from pytransit.utils.downsample import downsample_time_1d, downsample_time_2d
-#from pytransit.utils.tess import read_tess_spoc
 from scipy.ndimage import label
 from scipy.signal import medfilt
 
@@ -35,8 +34,8 @@ def downsample_data(times, fluxes, covs, bwidth=10.):
 def load_spitzer(downsampling=None, nleg=1):
     """Imports the 3.6 um and 4.5 um Spitzer data from Beatty et al. (2014) and Beatty et al. (2019).
     """
-    times, fluxes, covs, pbs = [], [], [], []
-    for f in spitzer_files:
+    times, fluxes, covs, pbs, nids = [], [], [], [], []
+    for nid, f in enumerate(spitzer_files):
         df = pd.read_csv(spitzer_data_dir / f)
         time, flux, ferr = df.values[:, :3].T
         cov = df.values[:, -2:]
@@ -59,15 +58,17 @@ def load_spitzer(downsampling=None, nleg=1):
                 fluxes.append(flux[lm][100:-100].copy())
                 covs.append(ll[lm][100:-100].copy())
                 pbs.append(pb)
+                nids.append(nid)
         else:
             times.append(time)
             fluxes.append(flux)
             covs.append(ll)
             pbs.append(pb)
+            nids.append(nid)
 
     if downsampling is not None:
         times, fluxes, covs = downsample_data(times, fluxes, covs, downsampling)
-    return times, fluxes, covs, pbs
+    return times, fluxes, covs, pbs, array(nids)
 
 
 def load_beatty_2017(nleg=0, downsampling=None):
@@ -83,10 +84,10 @@ def load_beatty_2017(nleg=0, downsampling=None):
         covs = c_[covs, legvander((time - time.min()) / time.ptp() * 2 - 1, nleg)[:, 1:]]
     covs = (covs - covs.mean(0)) / covs.std(0)
 
-    times, fluxes, covs, pbs = [time], [flux], [covs], ['H']
+    times, fluxes, covs, pbs, nids = [time], [flux], [covs], ['H'], array([0])
     if downsampling is not None:
         times, fluxes, covs = downsample_data(times, fluxes, covs, downsampling)
-    return times, fluxes, covs, pbs
+    return times, fluxes, covs, pbs, nids
 
 
 def load_croll_2015(nleg=0, downsampling=None):
@@ -104,10 +105,10 @@ def load_croll_2015(nleg=0, downsampling=None):
     covs = (covs - covs.mean(0)) / covs.std(0)
 
     m = flux > 0.99
-    times, fluxes, covs, pbs = [time[m]], [flux[m]], [covs[m]], ['Ks']
+    times, fluxes, covs, pbs, nids = [time[m]], [flux[m]], [covs[m]], ['Ks'], array([0])
     if downsampling is not None:
         times, fluxes, covs = downsample_data(times, fluxes, covs, downsampling)
-    return times, fluxes, covs, pbs
+    return times, fluxes, covs, pbs, nids
 
 
 def read_tess_spoc(tic: int,
@@ -152,4 +153,4 @@ def load_tess(downsampling=10.):
         times, fluxes, _ = downsample_time_1d(times, fluxes, downsampling / 60 / 24)
         m = isfinite(times)
         times, fluxes = times[m], fluxes[m]
-    return [times], [fluxes], [array([[]])], ['TESS']
+    return [times], [fluxes], [array([[]])], ['TESS'], array([0])

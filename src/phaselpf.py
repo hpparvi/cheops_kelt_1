@@ -1,9 +1,10 @@
 import seaborn as sb
 
 from matplotlib.pyplot import subplots, setp
-from numpy import inf, repeat, arctan2, atleast_2d, sqrt, squeeze, pi, median, percentile, linspace
+from numpy import inf, repeat, arctan2, atleast_2d, sqrt, squeeze, pi, median, percentile, linspace, argsort
 from numpy.random import permutation
 from pytransit import EclipseModel
+from pytransit.lpf.tesslpf import downsample_time
 from pytransit.orbits.orbits_py import as_from_rhop, i_from_ba
 from pytransit.param import GParameter, PParameter, NormalPrior as NP, UniformPrior as UP
 from pytransit.utils.misc import fold
@@ -43,8 +44,6 @@ class PhaseLPF(EclipseLPF):
                GParameter('adb', 'Doppler boosting amplitude', '', UP(0, 1), (0, inf)),
                GParameter('ted', 'Day-side flux ratio', '', UP(0.0, 0.2), (-inf, inf)),
                GParameter('ten', 'Night-side flux ratio', '', UP(0.0, 0.1), (-inf, inf)),
-               #GParameter('ted', 'Day-side flux ratio', '', UP(-3, 0), (-inf, inf)),
-               #GParameter('ten', 'Night-side flux ratio', '', UP(-3, 0), (-inf, inf)),
                GParameter('teo', 'Thermal emission offset', 'rad', UP(-pi, pi), (-inf, inf)),
                GParameter('ag', 'Geometric albedo', '', UP(0, 1), (0, 1))]
         self.ps.add_global_block('phase', pph)
@@ -72,8 +71,6 @@ class PhaseLPF(EclipseLPF):
         k = sqrt(pv[:, 6:7])
         aev = pv[:, 7]
         adb = pv[:, 8]
-        #dte = 10**pv[:, 9]
-        #nte = 10**pv[:, 10]
         dte = pv[:, 9]
         nte = pv[:, 10]
         ote = pv[:, 11]
@@ -154,39 +151,45 @@ class PhaseLPF(EclipseLPF):
         fig.tight_layout()
         return fig
 
-    def plot_posteriors(self, bins: int = 40, figsize=None, truncate: bool = False, nsamples: int = 1000):
-        df = self.posterior_samples(derived_parameters=False)
+    def plot_folded_eclipse_model(self, method: str = 'optimization', nsamples: int = 300, binwidth: float = 0.01,
+                                  xlim=None, ylim=None):
+        assert method in ('optimization', 'mcmc')
+        tm = EclipseModel()
 
-        fig, axs = subplots(1, 2, figsize=figsize)
-        for i, p in enumerate((10**df.ted, 1e6*10**df.ted*df.k2)):
-            axs[i].hist(p, bins=bins, density=True)
+        t0, p = self.de.minimum_location[[0, 1]]
+        phasem = fold(self.timea, p, t0, normalize=False)
+        time_m = linspace(t0 + phasem.min(), t0 + phasem.max(), 500)
+        tm.set_data(time_m - self._tref)
 
-            if truncate:
+        fo = self.ofluxa
+        if method == 'optimization':
+            pv = self.de.minimum_location
+            fm = self.transit_model(pv, tm=tm, time=time_m)
+            bl = self.baseline(pv)
+        else:
+            df = self.posterior_samples(derived_parameters=False)
+            pvs = permutation(df.values)[:nsamples]
+            pv = median(pvs, 0)
+            fms = self.transit_model(pvs, tm=tm, time=time_m)
+            bls = self.baseline(pvs)
+            bl = median(bls, 0)
+            fm, fmm, fmp = percentile(fms, [50, 2.5, 97.5], 0)
 
-                def neglln(x, samples, vmax):
-                    m, s = x
-                    a, b = 0.0, vmax
-                    return -truncnorm((a - m)/s, (b - m)/s, m, s).logpdf(samples).sum()
+        t0, p = pv[[0, 1]]
+        phaseo = fold(self.timea, p, t0, normalize=False)
+        phasem = fold(time_m, p, t0, normalize=False)
 
-                samples = permutation(p)[:nsamples]
-                vmax = samples.max()
-                res = minimize(neglln, (median(samples), samples.std()), (samples, vmax))
-                mm, ms = res.x
-                a = -mm/ms
-                b = (vmax - mm)/ms
-                x = linspace(max(0.0, mm - 5*ms), mm + 5*ms)
+        sids = argsort(phaseo)
+        pb, fb, eb = downsample_time(phaseo[sids], (fo / bl)[sids], binwidth)
 
-                axs[i].plot(x, truncnorm.pdf(x, a, b, mm, ms), 'k')
-                axs[i].plot([mm, mm], [0, truncnorm.pdf(mm, a, b, mm, ms)], 'k--', lw=1.5)
-            else:
-                mm, ms = p.mean(), p.std()
-                x = linspace(max(0.0, mm - 5*ms), mm + 5*ms)
-                axs[i].plot(x, norm.pdf(x, mm, ms), 'k')
-                axs[i].plot([mm, mm], [0, norm.pdf(mm, mm, ms)], 'k--', lw=1.5)
-            axs[i].text(0.98, 0.9, f"$\mu=${mm:.3f}\n$\sigma=${ms:.3f}", ha='right', transform=axs[i].transAxes)
-
-        setp(axs[0], xlabel='Planet-star flux ratio', ylabel='Posterior probability', yticks=[], xlim=(0.0, 0.12))
-        setp(axs[1], xlabel='Eclipse depth [ppm]', yticks=[], xlim=(0, 700))
-        sb.despine(fig, offset=8)
+        fig, ax = subplots()
+        ax.errorbar(24 * (pb - 0.5 * p), fb, eb, fmt='ok')
+        for s in self.lcslices:
+            ax.plot(24 * (phaseo[s] - 0.5 * p), fo[s] / bl[s], 'k.', alpha=0.1)
+        if method == 'mcmc':
+            ax.fill_between(24 * (phasem - 0.5 * p), fmm, fmp, alpha=0.5)
+        ax.plot(24 * (phasem - 0.5 * p), fm, 'k')
+        ax.autoscale(enable=True, axis='x', tight=True)
+        setp(ax, xlabel='Time - T$_e$ [h]', ylabel='Normalised flux', xlim=xlim, ylim=ylim)
         fig.tight_layout()
         return fig
