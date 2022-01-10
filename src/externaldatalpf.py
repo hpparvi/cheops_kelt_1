@@ -19,7 +19,7 @@ from src.kelt1 import (zero_epoch, period, filter_names, beaming_amplitudes as b
 
 ds = dict(lbt=2., croll=2., spitzer=2., tess=None)
 
-class JointLPF(PhaseCurveLPF):
+class ExternalDataLPF(PhaseCurveLPF):
     def __init__(self, scenario: str, savedir: Path = Path('results'), downsampling = None):
         """KELT-1b joint model LPF.
 
@@ -29,7 +29,7 @@ class JointLPF(PhaseCurveLPF):
           a) Zero albedo and unconstrained emission, EV amplitude constrained by a theoretical prior.
           b) Zero albedo and unconstrained emission, EV amplitude constrained by a ratio prior.
           c) Zero albedo and unconstarined emission, EV amplitude unconstrained
-          d) Unconstrained emission and reflection + constrained ev
+          d) Unconstrained emission and reflection + theoretical ev
         """
         self.scenarios = 'a b c d'.split()
         self.labels = {'a': 'emission_and theoretical_ev',
@@ -72,12 +72,12 @@ class JointLPF(PhaseCurveLPF):
 
     def _post_initialisation(self):
         super()._post_initialisation()
-        self.set_prior('tc', 'NP', zero_epoch.n, 0.01)  # - Zero epoch: normal prior with an inflated uncertainty
-        self.set_prior('p', 'NP', period.n, 3*period.s)       # - Orbital period: normal prior with an inflated uncertainty
-        self.set_prior('rho', 'NP', 0.6, 0.075)         # - Stellar density: wide normal prior
-        self.set_prior('secw', 'NP', 0.0, 1e-6)         # - Circular orbit: sqrt(e) cos(w) and sqrt(e) sin(w) forced
-        self.set_prior('sesw', 'NP', 0.0, 1e-6)         #   to zero with normal priors.
-        self.set_prior('k2', 'NP', 0.078, 0.005)        # - Area ratio: wide normal prior based on Siverd et al. (2012)
+        self.set_prior('tc', 'NP', zero_epoch.n, 0.01)   # - Zero epoch: normal prior with an inflated uncertainty
+        self.set_prior('p', 'NP', period.n, 3*period.s)  # - Orbital period: normal prior with an inflated uncertainty
+        self.set_prior('rho', 'NP', 0.6, 0.075)          # - Stellar density: wide normal prior
+        self.set_prior('secw', 'NP', 0.0, 1e-6)          # - Circular orbit: sqrt(e) cos(w) and sqrt(e) sin(w) forced
+        self.set_prior('sesw', 'NP', 0.0, 1e-6)          #   to zero with normal priors.
+        self.set_prior('k2', 'NP', 0.078, 0.005)         # - Area ratio: wide normal prior based on Siverd et al. (2012)
 
         self.set_prior('q1_36um', 'NP', 0.03, 0.0005)
         self.set_prior('q2_36um', 'NP', 0.28, 0.0040)
@@ -141,8 +141,8 @@ class JointLPF(PhaseCurveLPF):
         elif self.scenario == "b":
             pr_e_h = NP(0.81, 0.05)
             pr_e_ks = NP(0.80, 0.05)
-            pr_e_s1 = NP(0.78, 0.10)
-            pr_e_s2 = NP(0.78, 0.10)
+            pr_e_s1 = NP(0.77, 0.10)
+            pr_e_s2 = NP(0.77, 0.10)
             def ev_amplitude_prior(pvp):
                 h_ratio = pvp[:, 14] / pvp[:, 8]
                 ks_ratio = pvp[:, 20] / pvp[:, 8]

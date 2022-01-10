@@ -42,7 +42,7 @@ class CHEOPSLPF(PhaseCurveLPF):
         for p in self.ps[self._sl_lm]:
             p.prior = LaplacePrior(p.prior.mean, p.prior.std)
 
-        df = read_mcmc(self.result_dir / '01a_ext_emission_and theoretical_ev.nc')
+        df = read_mcmc(self.result_dir / '01b_ext_emission_and_constrained_ev.nc')
         self.set_prior('tc', 'NP', df.tc.median(), df.tc.std())
         self.set_prior('p', 'NP', df.p.median(), df.p.std())
         self.set_prior('rho', 'NP', df.rho.median(), df.rho.std())
@@ -64,7 +64,7 @@ class CHEOPSLPF(PhaseCurveLPF):
         if self.scenario == 'a':
             self.set_prior('aev_cheops', 'NP', eva['CHEOPS'].n, eva['CHEOPS'].s)
         elif self.scenario == 'b':
-            self.set_prior('aev_cheops', 'NP', 1.128*df.aev_TESS.median(), 1.128*df.aev_TESS.std())
+            self.set_prior('aev_cheops', 'NP', 1.083*df.aev_TESS.median(), df.aev_TESS.std())
         elif self.scenario == 'c':
             self.set_prior('aev_cheops', 'UP', 0.0, 1e-3)
         elif self.scenario == 'd':

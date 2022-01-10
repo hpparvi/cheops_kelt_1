@@ -38,6 +38,7 @@ kelt1_m =  ufloat(27.38, 0.93)  # KELT-1b mass in M_Jup
 
 zero_epoch = ufloat(2455914.1628, 0.0023)  # Siverd et al. (2012)
 period = ufloat(1.217513, 0.000015)        # Siverd et al. (2012)
+aor = ufloat(3.65, 0.03)                   # Beatty  et al. (2020)
 
 b = ufloat(0.195, 0.05)
 k2 = ufloat(0.005935, 4.468e-5)
@@ -54,23 +55,23 @@ star_rho  = rho = ufloat(0.58, 0.05)
 
 # Eclipse depths and flux ratios
 # ------------------------------
-edtessb = ufloat(371e-6, 50e-6)  # TESS band from beautty et al.
+edtessb = ufloat(371e-6, 50e-6)  # TESS band from beatty et al.
 edtesse = ufloat(304e-6, 75e-6)  # TESS band from von Essen et al.
-edh = ufloat(1418e-6, 94e-6)     # H-band from Beautty et al.
+edh = ufloat(1418e-6, 94e-6)     # H-band from Beatty et al.
 edks = ufloat(1600e-6, 190e-6)   # Ks-band from Croll et al.
 eds1 = ufloat(1877e-6, 58e-6)    # Spitzer 3.6 um band from Beatty et al. (2019)
 eds2 = ufloat(2083e-6, 70e-6)    # Spitzer 4.5 um band from Beatty et al. (2019)
 
 frtessb = ufloat(0.0636, 0.0086)  # TESS band from Beatty et al.
 frtesse = ufloat(0.052, 0.013)    # TESS band from von Essen et al.
-frh = ufloat(0.243, 0.016)        # H-band from Beautty et al.
+frh = ufloat(0.243, 0.016)        # H-band from Beatty et al.
 frks = ufloat(0.274, 0.033)       # Ks-band from Croll et al.
 frs1 = ufloat(0.3218, 0.0099)     # Spitzer 3.6 um band from Beatty et al. (2019)
 frs2 = ufloat(0.357, 0.012)       # Spitzer 4.5 um band from Beatty et al. (2019)
 
 # Theoretical ellipsoidal variation amplitudes
 # --------------------------------------------
-ev_amplitudes = {n:a for n,a in zip(filter_names, [1e-6*ufloat(s) for s in "490+/-29 434+/-25 352+/-20 347+/-20 338+/-20 337+/-20".split()])}
+ev_amplitudes = {n:a for n,a in zip(filter_names, [1e-6*ufloat(s) for s in "480+/-30 443+/-28 358+/-23 353+/-22 344+/-22 343+/-22".split()])}
 
 # Doppler beaming amplitudes
 # --------------------------
