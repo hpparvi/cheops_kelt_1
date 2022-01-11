@@ -189,4 +189,15 @@ def read_tw_lightcurve(visit):
     return time, flux, cov
 
 
+def load_detrended_cheops():
+    df = Table.read('data/cheops_final_detrended.fits').to_pandas()
+    times, fluxes, covs, pbs = [], [], [], []
+    for v in df.visit.unique():
+        m = df.visit == v
+        times.append(df.time_bjd[m].values.copy())
+        fluxes.append(df.flux_cor[m].values.copy())
+        covs.append(array([[]]))
+        pbs.append('CHEOPS')
+    nids = arange(len(df.visit.unique()))
+    return times, fluxes, covs, pbs, nids
 
