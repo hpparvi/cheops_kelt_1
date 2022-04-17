@@ -6,6 +6,7 @@ from pathlib import Path
 from matplotlib.pyplot import setp, subplots
 from numpy import radians, argsort, percentile, median, array, ones, zeros, arange, concatenate, squeeze
 from numpy.random import permutation
+from george.kernels import ExpSquaredKernel as ESK
 
 from pytransit import LinearModelBaseline, NormalPrior as NP
 from pytransit.lpf.loglikelihood import WNLogLikelihood, CeleriteLogLikelihood
@@ -14,6 +15,7 @@ from pytransit.utils.downsample import downsample_time_1d
 from pytransit.orbits import epoch, fold
 
 from src.dataimport import load_tess, load_beatty_2017, load_spitzer, load_croll_2015
+from src.georgelnl import GeorgeLogLikelihood
 from src.kelt1 import (zero_epoch, period, filter_names, beaming_amplitudes as ba, beaming_uncertainties as be,
                        ev_amplitudes as eva, star_rho, )
 
@@ -49,7 +51,14 @@ class ExternalDataLPF(PhaseCurveLPF):
         tt, tf, tcov, tpb, tnids = load_tess(downsampling=ds['tess'])
         ht, hf, hcov, hpb, hnids = load_beatty_2017(downsampling=ds['lbt'])
         kt, kf, kcov, kpb, knids = load_croll_2015(downsampling=ds['croll'])
-        st, sf, scov, spb, snids = load_spitzer(downsampling=ds['spitzer'], nleg=3)
+        st, sf, scov, spb, snids = load_spitzer(downsampling=ds['spitzer'], nleg=1)
+
+        # Store the H and Spitzer covariates for the GP model
+        # ---------------------------------------------------
+        self._gp_covs_h = hcov
+        self._gp_covs_spitzer = scov
+        hcov = [array([[]]) for i in range(len(hcov))]
+        scov = [array([[]]) for i in range(len(scov))]
 
         # Fix the noise IDs
         # -----------------
@@ -57,11 +66,16 @@ class ExternalDataLPF(PhaseCurveLPF):
         knids += 1+hnids[-1]
         snids += 1+knids[-1]
 
+        self.ins = ['tess', 'h']
+
         times = tt + ht + kt + st
         fluxes = tf + hf + kf + sf
         covs = tcov + hcov + kcov + scov
         pbs = pd.Categorical(tpb + hpb + kpb + spb, categories=['TESS', 'H', 'Ks', '36um', '45um'])
         noise_ids = concatenate([tnids, hnids, knids, snids]) #arange(len(times))
+
+        self.ins = pbs
+        self.piis = [0, 0, 0, 0, 1, 2, 3, 0, 1, 2, 3]
 
         # Initialise the PhaseCurveLPF and add in a linear baseline model
         # ---------------------------------------------------------------
@@ -170,10 +184,22 @@ class ExternalDataLPF(PhaseCurveLPF):
     # We use a GP log likelihood for the TESS, LBT, and CFHT data and
     # uncorrelated normal log likelihood for Spitzer else.
     def _init_lnlikelihood(self):
-            self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[0]))  # TESS
-            self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[1]))  # LBT H
-            self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[2]))  # CFHT Ks
-            self._add_lnlikelihood_model(WNLogLikelihood(self, noise_ids=array([3,4,5,6])))
+        self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[0], name='gp_TESS'))  # TESS
+
+        # LBT H
+        c = self._gp_covs_h
+        k = self.fluxes[1].var() * ESK(metric=1, ndim=c[0].shape[1], axes=0)
+        for i in range(1, c[0].shape[1]):
+            k *= ESK(metric=2, ndim=c[0].shape[1], axes=i)
+        self._add_lnlikelihood_model(GeorgeLogLikelihood(self, k, c, lcids=[1], name='gp_H'))
+
+        #self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[1]))  # LBT H
+        self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[2], name='gp_Ks'))  # CFHT Ks
+
+        # Spitzer
+        k = median([f.var() for f in self.fluxes[3:]]) * ESK(metric=1, ndim=2, axes=0) * ESK(metric=1, ndim=2, axes=1)
+        self._add_lnlikelihood_model(GeorgeLogLikelihood(self, k, self._gp_covs_spitzer, lcids=[3,4,5,6,7,8,9,10], name='gp_Spitzer'))
+        #self._add_lnlikelihood_model(WNLogLikelihood(self, noise_ids=array([3,4,5,6])))
 
     def lnposterior(self, pv):
         return squeeze(super().lnposterior(pv))
