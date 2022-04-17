@@ -3,11 +3,18 @@ from pathlib import Path
 import pandas as pd
 import xarray as xa
 
-from astropy.stats import sigma_clip, mad_std
+from astropy.stats import sigma_clip, mad_std, sigma_clipped_stats
 from astropy.table import Table
-from matplotlib.pyplot import bar, axhline
-from numpy import sin, cos, diff, ones, median, argmin, array, arange, sqrt
-from scipy.ndimage import median_filter
+from astropy.coordinates import SkyCoord
+from matplotlib.pyplot import bar, axhline, subplots
+from numpy import sin, cos, diff, ones, median, argmin, array, arange, sqrt, concatenate, where, unique, histogram, std, \
+    exp, inf, pi, degrees, floor, log10
+from numpy.random import seed, normal, uniform
+from pytransit.orbits import as_from_rhop, i_from_ba, d_from_pkaiews
+from pytransit.utils import mp_from_kiepms
+from pytransit.utils.phasecurves import equilibrium_temperature
+from scipy.ndimage import median_filter, label
+from scipy.optimize import minimize
 from uncertainties import ufloat
 import astropy.units as u
 
@@ -34,6 +41,7 @@ d2s = u.day.to(u.s)
 
 # KELT-1b parameters
 # --------------------
+kelt1_sc = SkyCoord(0.36215342, 39.38382895, unit='deg')
 kelt1_m =  ufloat(27.38, 0.93)  # KELT-1b mass in M_Jup
 
 zero_epoch = ufloat(2455914.1628, 0.0023)  # Siverd et al. (2012)
@@ -43,15 +51,17 @@ aor = ufloat(3.65, 0.03)                   # Beatty  et al. (2020)
 b = ufloat(0.195, 0.05)
 k2 = ufloat(0.005935, 4.468e-5)
 
+rv_k = ufloat(4239, 52)  # [m/s] Siverd et al. (2012)
+
 # Stellar parameters
 # ------------------
 tic = 432549364
 star_teff = ufloat(6516,  49)
 star_logg = ufloat(4.228,  0.02)
 star_z    = ufloat(0.052,  0.079)
-star_r    = ufloat(1.471, 0.045)
-star_m    = ufloat(1.335, 0.063)
-star_rho  = rho = ufloat(0.58, 0.05)
+star_m    = ufloat(1.370, 0.059)
+star_r    = ufloat(1.530, 0.009)
+star_rho  = rho = (star_m * u.M_sun.to(u.g)) / (4/3*pi*(star_r * u.R_sun.to(u.cm))**3)
 
 # Eclipse depths and flux ratios
 # ------------------------------
@@ -83,6 +93,53 @@ beaming_uncertainties = {n:a for n,a in zip(filter_names, array([3.2e-06, 2.1e-0
 
 rootdir = Path(__file__).parent.parent
 datadir = rootdir / 'data'
+
+
+def derive_qois(samples, rseed: int = 0):
+    seed(rseed)
+    df = samples.copy()
+    ns = df.shape[0]
+    dstar_r = normal(star_r.n, star_r.s, ns) * (1 * u.R_sun).to(u.R_jup).value
+    dstar_t = normal(star_teff.n, star_teff.s, ns)
+    drv_k = normal(rv_k.n, rv_k.s, ns)
+    dstar_m = normal(star_m.n, star_m.s, ns)
+    df['a'] = as_from_rhop(df.rho.values, df.p.values)
+    df['a_au'] = (df.a.values * dstar_r * u.R_jup).to(u.AU).value
+    df['inc'] = i_from_ba(df.b.values, df.a.values)
+    df['inc_deg'] = degrees(df.inc)
+    df['t14'] = 24 * d_from_pkaiews(df.p.values, df.k.values, df.a.values, df.inc.values, 0.0, 0.0, 14)
+    df['r'] = df.k * dstar_r
+    df['teq'] = equilibrium_temperature(dstar_t, df.a.values, uniform(0.25, 0.50, ns), uniform(0, 0.4, ns))
+    df['mp'] = mp_from_kiepms(drv_k, df.inc.values, 0.0, df.p.values, dstar_m)
+    for c in df.columns:
+        if 'log10_te' in c:
+            df[c.replace('log10_', '')] = 10 ** df[c]
+    return df
+
+
+def round_with_uncertainty(v, em, ep=None, d=2):
+    if ep is None:
+        return array([v, em]).round(1-int(floor((log10(abs(em))))))
+    else:
+        return array([v, em, ep]).round(1-int(floor(log10(abs(em)))))
+
+
+def gaussian(theta, x):
+    a, mu, sigma = theta
+    return a * exp(-0.5 * (x - mu) ** 2 / sigma ** 2)
+
+
+def fit_truncated_normal(d, bins: int = 100, range=None):
+    def minfun(p, x):
+        if p[1] < 0.0:
+            return inf
+        else:
+            return ((density - gaussian(p, x))**2).sum()
+
+    density, edges = histogram(d, bins=bins, range=range, density=True)
+    x = 0.5 * (edges[0:-1] + edges[1:])
+    return minimize(minfun, array([density.max(), median(d), std(d)]), args=(x,)).x
+
 
 def bplot(c):
     qs = c.quantile([0.16, 0.84, 0.025, 0.975, 0.0015, 0.9985, 0.49, 0.51])
@@ -187,6 +244,45 @@ def read_tw_lightcurve(visit):
     time, flux, cov = [df.BJD.values.copy()], [df.Flux.values.copy()], [df.iloc[:,3:].values.copy()]
     cov[0] = (cov[0] - cov[0].mean(0)) / cov[0].std(0)    
     return time, flux, cov
+
+
+def clean_tw_lightcurve(t, f, c, sigma: float = 2.5, do_plot: bool = False, return_both: bool = False):
+    def find_outliers(data, ids, outlier_ids, sigma: float = 2.5):
+        filtered_data = median_filter(data[ids], 20)
+        detrended_data = data[ids] - filtered_data
+        _, _, data_std = sigma_clipped_stats(detrended_data, sigma=sigma)
+        outlier_mask = abs(detrended_data) > sigma * data_std
+        outlier_ids.append(ids[outlier_mask])
+
+    m = ones(t.size, bool)
+    m[1:] = diff(t) < 0.01
+    labels, nl = label(m)
+    i = where(~m)[0]
+    labels[i] = labels[i + 1]
+
+    if do_plot:
+        fig, ax = subplots(figsize=(13, 5))
+    else:
+        fig, ax = None, None
+
+    outlier_ids = []
+    for ilabel in range(1, nl + 1):
+        ids = where(labels == ilabel)[0]
+        find_outliers(f, ids, outlier_ids, sigma)
+        for cov in c.T:
+            find_outliers(cov, ids, outlier_ids, 3.2)
+    outlier_ids = unique(concatenate(outlier_ids))
+    good_ids = array(list(set(arange(t.size)).difference(outlier_ids)))
+
+    if do_plot:
+        ax.plot(t[good_ids], f[good_ids], '.')
+        ax.plot(t[outlier_ids], f[outlier_ids], 'kx')
+        fig.tight_layout()
+
+    if return_both:
+        return t[good_ids], t[outlier_ids], f[good_ids], f[outlier_ids], c[good_ids], c[outlier_ids]
+    else:
+        return t[good_ids], f[good_ids], c[good_ids]
 
 
 def load_detrended_cheops():

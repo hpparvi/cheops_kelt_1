@@ -4,18 +4,21 @@ import seaborn as sb
 from pathlib import Path
 
 from matplotlib.pyplot import setp, subplots
-from numpy import radians, argsort, percentile, median, array, ones, zeros, arange, concatenate
+from numpy import radians, argsort, percentile, median, array, ones, zeros, arange, concatenate, squeeze, where, repeat, \
+    atleast_2d, arctan2, inf, pi, sqrt
 from numpy.random import permutation
 
-from pytransit import LinearModelBaseline, NormalPrior as NP
+from pytransit import LinearModelBaseline
 from pytransit.lpf.loglikelihood import WNLogLikelihood, CeleriteLogLikelihood
+from pytransit.lpf.lpf import map_ldc
 from pytransit.lpf.phasecurvelpf import PhaseCurveLPF
+from pytransit.param import PParameter, GParameter, UniformPrior as UP, NormalPrior as NP
 from pytransit.utils.downsample import downsample_time_1d
-from pytransit.orbits import epoch, fold
+from pytransit.orbits import epoch, fold, as_from_rhop, i_from_ba
 
 from src.dataimport import load_tess, load_beatty_2017, load_spitzer, load_croll_2015
-from src.kelt1 import (zero_epoch, period, filter_names, beaming_amplitudes as ba, beaming_uncertainties as be,
-                       ev_amplitudes as eva,)
+from src.kelt1 import (zero_epoch, period, star_rho, filter_names, beaming_amplitudes as ba, beaming_uncertainties as be,
+                       ev_amplitudes as eva, load_detrended_cheops)
 
 ds = dict(lbt=2., croll=2., spitzer=2., tess=None)
 
@@ -28,9 +31,10 @@ class FinalLPF(PhaseCurveLPF):
         Scenarios:
           a) Zero albedo and unconstrained emission, EV amplitude constrained by a ratio prior.
         """
-        self.scenarios = ('a', 'b')
+        self.scenarios = ('a', 'b', 'c')
         self.labels = {'a': 'emission_and_constrained_ev',
-                       'b': 'emission_and_reflection_and_constrained_ev'}
+                       'b': 'emission_and_reflection_and_constrained_ev',
+                       'c': 'emission_and_unconstrained_ev'}
 
         if scenario not in self.scenarios:
             raise ValueError(f'The FinalLPF scenario has to be one of {self.scenarios}')
@@ -49,6 +53,7 @@ class FinalLPF(PhaseCurveLPF):
 
         # Fix the noise IDs
         # -----------------
+        tnids += 1+cnids[-1]
         hnids += 1+tnids[-1]
         knids += 1+hnids[-1]
         snids += 1+knids[-1]
@@ -59,21 +64,35 @@ class FinalLPF(PhaseCurveLPF):
         pbs = pd.Categorical(cpb + tpb + hpb + kpb + spb, categories=['CHEOPS', 'TESS', 'H', 'Ks', '36um', '45um'])
         noise_ids = concatenate([cnids, tnids, hnids, knids, snids])
 
+        self.ins = array(pbs.categories.values)[pbs.codes]
+
+        self.piis, c = [], 0
+        ic = self.ins[0]
+        for ins in self.ins:
+            if ins == ic:
+                c += 1
+            else:
+                ic = ins
+                c = 0
+            self.piis.append(c)
+
         # Initialise the PhaseCurveLPF and add in a linear baseline model
         # ---------------------------------------------------------------
         name = f"03{self.scenario}_fin_{self.labels[self.scenario]}"
         super().__init__(name, pbs.categories.values, times, fluxes, pbids=pbs.codes, covariates=covs,
                          wnids=noise_ids, result_dir=savedir)
         self._add_baseline_model(LinearModelBaseline(self))
+        for p in self.ps[self._sl_lm]:
+            p.prior.std *= 3
 
     def _post_initialisation(self):
         super()._post_initialisation()
-        self.set_prior('tc', 'NP', zero_epoch.n, 0.01)   # - Zero epoch: normal prior with an inflated uncertainty
-        self.set_prior('p', 'NP', period.n, 3*period.s)  # - Orbital period: normal prior with an inflated uncertainty
-        self.set_prior('rho', 'NP', 0.6, 0.075)          # - Stellar density: wide normal prior
-        self.set_prior('secw', 'NP', 0.0, 1e-6)          # - Circular orbit: sqrt(e) cos(w) and sqrt(e) sin(w) forced
-        self.set_prior('sesw', 'NP', 0.0, 1e-6)          #   to zero with normal priors.
-        self.set_prior('k2', 'NP', 0.078, 0.005)         # - Area ratio: wide normal prior based on Siverd et al. (2012)
+        self.set_prior('tc', 'NP', zero_epoch.n, 0.01)         # - Zero epoch: normal prior with inflated uncertainty
+        self.set_prior('p', 'NP', period.n, 3*period.s)        # - Orbital period: normal prior with inflated uncertainty
+        self.set_prior('rho', 'NP', star_rho.n, 3*star_rho.s)  # - Stellar density: normal prior with inflated uncertainty
+        self.set_prior('secw', 'NP', 0.0, 1e-6)                # - Circular orbit: sqrt(e) cos(w) and sqrt(e) sin(w) forced
+        self.set_prior('sesw', 'NP', 0.0, 1e-6)                #                   to zero with normal priors.
+        self.set_prior('k2', 'NP', 0.078, 0.005)               # - Area ratio: wide normal prior based on Siverd et al. (2012)
 
         # Set the limb darkening priors
         # -----------------------------
@@ -93,20 +112,20 @@ class FinalLPF(PhaseCurveLPF):
 
         # Set the default phase curve priors
         # ----------------------------------
-        self.set_prior('oev', 'NP', 0.0, 1e-7)
+        self.set_prior('oev', 'NP', 0.0, 0.09)
         for pb in self.passbands:
             self.set_prior(f'aev_{pb}', 'UP', 0.0, 1000e-6)      # - Ellipsoidal variation
-            self.set_prior(f'ted_{pb}', 'UP', 0.0, 0.5)          # - Emission day-side flux ratio
-            self.set_prior(f'ten_{pb}', 'UP', 0.0, 0.5)          # - Emission night-side flux ratio
+            self.set_prior(f'log10_ted_{pb}', 'UP', -3.0, 0.0)   # - Emission day-side flux ratio
+            self.set_prior(f'log10_ten_{pb}', 'UP', -3.0, 0.0)   # - Emission night-side flux ratio
             self.set_prior(f'teo_{pb}', 'NP', 0.0, radians(10))  # - Emission peak offset
+        self.set_prior(f'log10_ten_TESS', 'UP', -5.0, 0.0)
 
-        # Force the CHEOPS, H, and Ks band emission offset to zero
-        # --------------------------------------------------------
+        # Force the H, and Ks band emission offset to zero
+        # ------------------------------------------------
         # We do this because we don't have enough phase
         # coverage to measure the offsets.
-        self.set_prior('teo_CHEOPS', 'NP', 0.0, 1e-5)
-        self.set_prior('teo_H', 'NP', 0.0, 1e-5)
-        self.set_prior('teo_Ks', 'NP', 0.0, 1e-5)
+        #self.set_prior('teo_H', 'NP', 0.0, 1e-5)
+        #self.set_prior('teo_Ks', 'NP', 0.0, 1e-5)
 
         # Set priors on the Doppler beaming amplitudes
         # --------------------------------------------
@@ -115,9 +134,9 @@ class FinalLPF(PhaseCurveLPF):
         # notebook), and vary from 65 ppm in the CHEOPS passband
         # to 15 ppm in the Spitzer passbands.
         self.set_prior('adb_CHEOPS', 'NP', ba['CHEOPS'], 2*be['CHEOPS'])
-        self.set_prior('adb_TESS',   'NP', ba['TESS'], 2*be['TESS'])
-        self.set_prior('adb_H',      'NP', ba['H'],    2*be['H'])
-        self.set_prior('adb_Ks',     'NP', ba['Ks'],   2*be['Ks'])
+        self.set_prior('adb_TESS',   'NP', ba['TESS'],   2*be['TESS'])
+        self.set_prior('adb_H',      'NP', ba['H'],      2*be['H'])
+        self.set_prior('adb_Ks',     'NP', ba['Ks'],     2*be['Ks'])
         self.set_prior('adb_36um',   'NP', ba['36um'],   2*be['36um'])
         self.set_prior('adb_45um',   'NP', ba['45um'],   2*be['45um'])
 
@@ -137,28 +156,53 @@ class FinalLPF(PhaseCurveLPF):
         # reference (TESS) passband. This ratio can
         # be estimated theoretically, as is done in
         # the "xxx" notebook.
-        pr_e_cheops = NP(1.083, 0.01)
-        pr_e_h = NP(0.81, 0.01)
-        pr_e_ks = NP(0.80, 0.01)
-        pr_e_s1 = NP(0.77, 0.01)
-        pr_e_s2 = NP(0.77, 0.01)
-        def ev_amplitude_prior(pvp):
-            ch_ratio = pvp[: 14] / pvp[:, 8] # TODO: Fix me!
-            h_ratio = pvp[:, 14] / pvp[:, 8]
-            ks_ratio = pvp[:, 20] / pvp[:, 8]
-            s1_ratio = pvp[:, 26] / pvp[:, 8]
-            s2_ratio = pvp[:, 32] / pvp[:, 8]
-            return (pr_e_cheops.logpdf(ch_ratio) + pr_e_h.logpdf(h_ratio) + pr_e_ks.logpdf(ks_ratio)
-                    + pr_e_s1.logpdf(s1_ratio) + pr_e_s2.logpdf(s2_ratio))
-        self.add_prior(ev_amplitude_prior)
+        if self.scenario in 'ab':
+            pr_e_cheops = NP(1.083, 0.01)
+            pr_e_h = NP(0.81, 0.01)
+            pr_e_ks = NP(0.80, 0.01)
+            pr_e_s1 = NP(0.77, 0.02)
+            pr_e_s2 = NP(0.77, 0.02)
+            def ev_amplitude_prior(pvp):
+                ch_ratio = pvp[:, 8] / pvp[:, 14]
+                h_ratio  = pvp[:, 20] / pvp[:, 14]
+                ks_ratio = pvp[:, 26] / pvp[:, 14]
+                s1_ratio = pvp[:, 32] / pvp[:, 14]
+                s2_ratio = pvp[:, 38] / pvp[:, 14]
+                return (pr_e_cheops.logpdf(ch_ratio) + pr_e_h.logpdf(h_ratio) + pr_e_ks.logpdf(ks_ratio)
+                        + pr_e_s1.logpdf(s1_ratio) + pr_e_s2.logpdf(s2_ratio))
+            self.add_prior(ev_amplitude_prior)
 
+        # Set a prior on the CHEOPS, H, and Ks nightside emission
+        # -------------------------------------------------------
+        # Nightside emission does not affect the results from the
+        # passbands where we have only eclipse observations, so we
+        # can safely fix the nightside amplitudes close to zero.
+        self.set_prior('log10_ten_CHEOPS', 'NP', -5, 0.01)
+        self.set_prior('log10_ten_H', 'NP', -5, 0.01)
+        self.set_prior('log10_ten_Ks', 'NP', -5, 0.01)
+
+        # Force hot spot offsets close to similar values
+        # ----------------------------------------------
+        pr_emission_offset_difference = NP(0.0, 0.07)
+        def emission_offset(pvp):
+            eo_mean = pvp[:, [12, 18, 24, 30, 36, 42]].mean()
+            return (  pr_emission_offset_difference.logpdf(pvp[:, 12] - eo_mean)
+                    + pr_emission_offset_difference.logpdf(pvp[:, 18] - eo_mean)
+                    + pr_emission_offset_difference.logpdf(pvp[:, 24] - eo_mean)
+                    + pr_emission_offset_difference.logpdf(pvp[:, 30] - eo_mean)
+                    + pr_emission_offset_difference.logpdf(pvp[:, 36] - eo_mean)
+                    + pr_emission_offset_difference.logpdf(pvp[:, 42] - eo_mean))
+        self.add_prior(emission_offset)
 
     # Define the log likelihood
     # -------------------------
     # We use a GP log likelihood for the TESS, LBT, and CFHT data and iid normal
     # log likelihood for CHEOPS and Spitzer.
     def _init_lnlikelihood(self):
-            self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[1]))  # TESS
-            self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[2]))  # LBT H
-            self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[3]))  # CFHT Ks
-            self._add_lnlikelihood_model(WNLogLikelihood(self, noise_ids=array([0,4,5,6,7])))
+            self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[8]))  # TESS
+            self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[9]))  # LBT H
+            self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[10]))  # CFHT Ks
+            self._add_lnlikelihood_model(WNLogLikelihood(self, noise_ids=array([0,1,2,3,4,5,6,7,11,12,13,14])))
+
+    def lnposterior(self, pv):
+        return squeeze(super().lnposterior(pv))

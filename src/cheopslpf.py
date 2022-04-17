@@ -13,7 +13,7 @@ from pytransit.utils.downsample import downsample_time_1d
 from pytransit.orbits import epoch, fold
 
 from src.kelt1 import (read_tw_lightcurve, read_mcmc, beaming_amplitudes as ba, beaming_uncertainties as be,
-                       ev_amplitudes as eva)
+                       ev_amplitudes as eva, clean_tw_lightcurve)
 
 class CHEOPSLPF(PhaseCurveLPF):
     def __init__(self, scenario: str, savedir: Path = Path('results')):
@@ -31,16 +31,17 @@ class CHEOPSLPF(PhaseCurveLPF):
         time, flux, cov = [], [], []
         for v in range(1, 9):
             t, f, c = read_tw_lightcurve(v)
-            time.extend(t)
-            flux.extend(f)
-            cov.extend(c)
+            t, f, c = clean_tw_lightcurve(t[0], f[0], c[0], sigma=2.4)
+            time.append(t)
+            flux.append(f)
+            cov.append(c)
 
         name = f"02{self.scenario}_cheops_{self.labels[self.scenario]}"
         super().__init__(name, 'cheops', time, flux, covariates=cov, tref=floor(time[0][0]), result_dir=savedir)
         self._add_baseline_model(LinearModelBaseline(self))
 
         for p in self.ps[self._sl_lm]:
-            p.prior = LaplacePrior(p.prior.mean, p.prior.std)
+            p.prior = LaplacePrior(p.prior.mean, 3*p.prior.std)
 
         df = read_mcmc(self.result_dir / '01b_ext_emission_and_constrained_ev.nc')
         self.set_prior('tc', 'NP', df.tc.median(), df.tc.std())
@@ -55,11 +56,11 @@ class CHEOPSLPF(PhaseCurveLPF):
         self.set_prior('q2_cheops', 'NP', 0.5, 1e-6)
 
         self.set_prior('teo_cheops', 'NP', 0.0, 1e-7)
-        self.set_prior('ten_cheops', 'NP', 1e-5, 1e-7)
+        self.set_prior('log10_ten_cheops', 'NP', -5.0, 0.01)
 
         self.set_prior('adb_cheops', 'NP', ba['CHEOPS'], 2 * be['CHEOPS'])
         self.set_prior('ag_cheops', 'NP', 1e-4, 1e-6)
-        self.set_prior('ted_cheops', 'UP', 0.0, 0.2)
+        self.set_prior('log10_ted_cheops', 'UP', -3.0, 0.0)
 
         if self.scenario == 'a':
             self.set_prior('aev_cheops', 'NP', eva['CHEOPS'].n, eva['CHEOPS'].s)

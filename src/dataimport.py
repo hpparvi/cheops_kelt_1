@@ -3,13 +3,17 @@ from typing import Optional, List, Union
 
 import pandas as pd
 import astropy.io.fits as pf
+from astropy.coordinates import EarthLocation
 from astropy.table import Table
+from astropy.time import Time
 
 from numpy import isfinite, diff, ones, median, c_, array, concatenate, sqrt, full
 from numpy.polynomial.legendre import legvander
 from pytransit.utils.downsample import downsample_time_1d, downsample_time_2d
 from scipy.ndimage import label
 from scipy.signal import medfilt
+
+from .kelt1 import kelt1_sc
 
 spitzer_data_dir = Path('data') / 'spitzer'
 
@@ -76,7 +80,9 @@ def load_beatty_2017(nleg=0, downsampling=None):
     """
 
     dfk = pd.read_csv('data/beatty/KELT1_H_Broad.dat', delim_whitespace=True)
-    time = dfk.mjd.values + 2456590
+    time = Time(dfk.mjd.values + 2456590, format='mjd', scale='utc',
+                location=EarthLocation.of_site('Large Binocular Telescope'))
+    time = (time + time.light_travel_time(kelt1_sc)).value.copy()
     flux = (dfk.kelt1 / (dfk.comp1 + dfk.comp2)).values
     flux /= median(flux)
     covs = dfk.values[:, 5:]
