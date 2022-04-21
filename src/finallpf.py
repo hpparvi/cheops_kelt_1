@@ -212,7 +212,7 @@ class FinalLPF(PhaseCurveLPF):
             self._add_lnlikelihood_model(WNLogLikelihood(self, noise_ids=array([0,1,2,3,4,5,6,7])))
 
             # TESS
-            self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[8]))
+            self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[8], name='gp_TESS'))
 
             # LBT H
             c = self._gp_covs_h
@@ -222,7 +222,7 @@ class FinalLPF(PhaseCurveLPF):
             self._add_lnlikelihood_model(GeorgeLogLikelihood(self, k, c, lcids=[9], name='gp_H'))
 
             # CFHT Ks
-            self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[10]))
+            self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[10], name='gp_Ks'))
 
             # Spitzer
             k = median([f.var() for f in self.fluxes[11:]]) * ESK(metric=1, ndim=2, axes=0) * ESK(metric=1, ndim=2, axes=1)
