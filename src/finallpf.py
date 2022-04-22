@@ -1,25 +1,16 @@
-import pandas as pd
-import seaborn as sb
-
 from pathlib import Path
 
-from matplotlib.pyplot import setp, subplots
-from numpy import radians, argsort, percentile, median, array, ones, zeros, arange, concatenate, squeeze, where, repeat, \
-    atleast_2d, arctan2, inf, pi, sqrt
-from numpy.random import permutation
+import pandas as pd
 from george.kernels import ExpSquaredKernel as ESK
-
+from numpy import radians, median, array, concatenate, squeeze
 from pytransit import LinearModelBaseline
 from pytransit.lpf.loglikelihood import WNLogLikelihood, CeleriteLogLikelihood
-from pytransit.lpf.lpf import map_ldc
 from pytransit.lpf.phasecurvelpf import PhaseCurveLPF
-from pytransit.param import PParameter, GParameter, UniformPrior as UP, NormalPrior as NP
-from pytransit.utils.downsample import downsample_time_1d
-from pytransit.orbits import epoch, fold, as_from_rhop, i_from_ba
+from pytransit.param import NormalPrior as NP
 
 from src.dataimport import load_tess, load_beatty_2017, load_spitzer, load_croll_2015
 from src.georgelnl import GeorgeLogLikelihood
-from src.kelt1 import (zero_epoch, period, star_rho, filter_names, beaming_amplitudes as ba, beaming_uncertainties as be,
+from src.kelt1 import (zero_epoch, period, star_rho, beaming_amplitudes as ba, beaming_uncertainties as be,
                        ev_amplitudes as eva, load_detrended_cheops)
 
 ds = dict(lbt=2., croll=2., spitzer=2., tess=None)
@@ -34,8 +25,8 @@ class FinalLPF(PhaseCurveLPF):
           a) Zero albedo and unconstrained emission, EV amplitude constrained by a ratio prior.
         """
         self.scenarios = ('a', 'b', 'c')
-        self.labels = {'a': 'emission_and_constrained_ev',
-                       'b': 'emission_and_reflection_and_constrained_ev',
+        self.labels = {'a': 'emission_and_theoretical_ev',
+                       'b': 'emission_and_constrained_ev',
                        'c': 'emission_and_unconstrained_ev'}
 
         if scenario not in self.scenarios:
@@ -150,12 +141,8 @@ class FinalLPF(PhaseCurveLPF):
 
         # Set a prior on the geometric albedo
         # -----------------------------------
-        if self.scenario == 'a':
-            for pb in self.passbands:
-                self.set_prior(f'ag_{pb}', 'NP', 1e-4, 1e-6)
-        elif self.scenario == 'b':
-            for pb in self.passbands:
-                self.set_prior(f'ag_{pb}', 'UP', 0.0, 2.0)
+        for pb in self.passbands:
+            self.set_prior(f'ag_{pb}', 'UP', 0.0, 2.0)
 
         # Set a prior on ellipsoidal variation
         # ------------------------------------
@@ -164,7 +151,10 @@ class FinalLPF(PhaseCurveLPF):
         # reference (TESS) passband. This ratio can
         # be estimated theoretically, as is done in
         # the "xxx" notebook.
-        if self.scenario in 'ab':
+        if self.scenario == 'a':
+            for pb in self.passbands:
+                self.set_prior(f'aev_{pb}', 'NP', eva[pb].n, eva[pb].s)
+        elif self.scenario == "b":
             pr_e_cheops = NP(1.083, 0.01)
             pr_e_h = NP(0.81, 0.01)
             pr_e_ks = NP(0.80, 0.01)
@@ -179,6 +169,8 @@ class FinalLPF(PhaseCurveLPF):
                 return (pr_e_cheops.logpdf(ch_ratio) + pr_e_h.logpdf(h_ratio) + pr_e_ks.logpdf(ks_ratio)
                         + pr_e_s1.logpdf(s1_ratio) + pr_e_s2.logpdf(s2_ratio))
             self.add_prior(ev_amplitude_prior)
+        elif self.scenario == 'c':
+            pass
 
         # Set a prior on the CHEOPS, H, and Ks nightside emission
         # -------------------------------------------------------

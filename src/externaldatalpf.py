@@ -1,22 +1,20 @@
-import pandas as pd
-import seaborn as sb
-
 from pathlib import Path
 
-from matplotlib.pyplot import setp, subplots
-from numpy import radians, argsort, percentile, median, array, ones, zeros, arange, concatenate, squeeze
-from numpy.random import permutation
+import pandas as pd
+import seaborn as sb
 from george.kernels import ExpSquaredKernel as ESK
-
+from matplotlib.pyplot import setp, subplots
+from numpy import radians, argsort, percentile, median, array, concatenate, squeeze
+from numpy.random import permutation
 from pytransit import LinearModelBaseline, NormalPrior as NP
-from pytransit.lpf.loglikelihood import WNLogLikelihood, CeleriteLogLikelihood
+from pytransit.lpf.loglikelihood import CeleriteLogLikelihood
 from pytransit.lpf.phasecurvelpf import PhaseCurveLPF
-from pytransit.utils.downsample import downsample_time_1d
 from pytransit.orbits import epoch, fold
+from pytransit.utils.downsample import downsample_time_1d
 
 from src.dataimport import load_tess, load_beatty_2017, load_spitzer, load_croll_2015
 from src.georgelnl import GeorgeLogLikelihood
-from src.kelt1 import (zero_epoch, period, filter_names, beaming_amplitudes as ba, beaming_uncertainties as be,
+from src.kelt1 import (zero_epoch, period, beaming_amplitudes as ba, beaming_uncertainties as be,
                        ev_amplitudes as eva, star_rho, )
 
 ds = dict(lbt=2., croll=2., spitzer=2., tess=None)
@@ -28,16 +26,14 @@ class ExternalDataLPF(PhaseCurveLPF):
         This LPF models the TESS, LBT, and Spitzer data jointly.
 
         Scenarios:
-          a) Zero albedo and unconstrained emission, EV amplitude constrained by a theoretical prior.
-          b) Zero albedo and unconstrained emission, EV amplitude constrained by a ratio prior.
-          c) Zero albedo and unconstarined emission, EV amplitude unconstrained
-          d) Unconstrained emission and reflection + theoretical ev
+          a) Unconstrained emission, EV amplitude constrained by a theoretical prior.
+          b) Unconstrained emission, EV amplitude constrained by a ratio prior.
+          c) Unconstrained emission and EV amplitude.
         """
-        self.scenarios = 'a b c d'.split()
+        self.scenarios = 'a b c'.split()
         self.labels = {'a': 'emission_and_theoretical_ev',
                        'b': 'emission_and_constrained_ev',
-                       'c': 'emission_and_unconstrained_ev',
-                       'd': 'emission_and_reflection_and_theoretical_ev'}
+                       'c': 'emission_and_unconstrained_ev'}
 
         if scenario not in self.scenarios:
             raise ValueError(f'The JointLPF scenario has to be one of {self.scenarios}')
@@ -141,12 +137,8 @@ class ExternalDataLPF(PhaseCurveLPF):
 
         # Set a prior on the geometric albedo
         # -----------------------------------
-        if self.scenario in 'abc':
-            for pb in self.passbands:
-                self.set_prior(f'ag_{pb}', 'NP', 1e-4, 1e-6)
-        elif self.scenario == 'd':
-            for pb in self.passbands:
-                self.set_prior(f'ag_{pb}', 'UP', 0.0, 2.0)
+        for pb in self.passbands:
+            self.set_prior(f'ag_{pb}', 'NP', 1e-4, 1e-6)
 
         # Set a prior on ellipsoidal variation
         # ------------------------------------
@@ -155,7 +147,7 @@ class ExternalDataLPF(PhaseCurveLPF):
         # reference (TESS) passband. This ratio can
         # be estimated theoretically, as is done in
         # the "xxx" notebook.
-        if self.scenario in 'ad':
+        if self.scenario == 'a':
             for pb in self.passbands:
                 self.set_prior(f'aev_{pb}', 'NP', eva[pb].n, eva[pb].s)
         elif self.scenario == "b":
@@ -172,6 +164,15 @@ class ExternalDataLPF(PhaseCurveLPF):
             self.add_prior(ev_amplitude_prior)
         elif self.scenario == 'c':
             pass
+
+        # Set a prior on the CHEOPS, H, and Ks nightside emission
+        # -------------------------------------------------------
+        # Nightside emission does not affect the results from the
+        # passbands where we have only eclipse observations, so we
+        # can safely fix the nightside amplitudes close to zero.
+        self.set_prior('log10_ten_CHEOPS', 'NP', -5, 0.01)
+        self.set_prior('log10_ten_H', 'NP', -5, 0.01)
+        self.set_prior('log10_ten_Ks', 'NP', -5, 0.01)
 
         # Force hot spot offsets close to similar values
         # ----------------------------------------------
@@ -190,22 +191,26 @@ class ExternalDataLPF(PhaseCurveLPF):
     # We use a GP log likelihood for the TESS, LBT, and CFHT data and
     # uncorrelated normal log likelihood for Spitzer else.
     def _init_lnlikelihood(self):
-        self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[0], name='gp_TESS'))  # TESS
+        # TESS
+        # ----
+        self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[0], name='gp_TESS'))
 
         # LBT H
+        # -----
         c = self._gp_covs_h
         k = self.fluxes[1].var() * ESK(metric=1, ndim=c[0].shape[1], axes=0)
         for i in range(1, c[0].shape[1]):
             k *= ESK(metric=2, ndim=c[0].shape[1], axes=i)
         self._add_lnlikelihood_model(GeorgeLogLikelihood(self, k, c, lcids=[1], name='gp_H'))
 
-        #self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[1]))  # LBT H
-        self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[2], name='gp_Ks'))  # CFHT Ks
+        # CFHT Ks
+        # -------
+        self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[2], name='gp_Ks'))
 
         # Spitzer
+        # -------
         k = median([f.var() for f in self.fluxes[3:]]) * ESK(metric=1, ndim=2, axes=0) * ESK(metric=1, ndim=2, axes=1)
         self._add_lnlikelihood_model(GeorgeLogLikelihood(self, k, self._gp_covs_spitzer, lcids=[3,4,5,6,7,8,9,10], name='gp_Spitzer'))
-        #self._add_lnlikelihood_model(WNLogLikelihood(self, noise_ids=array([3,4,5,6])))
 
     def lnposterior(self, pv):
         return squeeze(super().lnposterior(pv))
