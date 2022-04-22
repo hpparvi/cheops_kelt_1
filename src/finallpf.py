@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 from george.kernels import ExpSquaredKernel as ESK
-from numpy import radians, median, array, concatenate, squeeze
+from numpy import radians, median, array, concatenate, squeeze, log
 from pytransit import LinearModelBaseline
 from pytransit.lpf.loglikelihood import WNLogLikelihood, CeleriteLogLikelihood
 from pytransit.lpf.phasecurvelpf import PhaseCurveLPF
@@ -36,6 +36,10 @@ class FinalLPF(PhaseCurveLPF):
         if downsampling is not None:
             ds.update(downsampling)
 
+        self._sl_gp_H = None
+        self._sl_gp_Ks = None
+        self._sl_gp_Spitzer = None
+
         # Load in the data
         # ----------------
         ct, cf, ccov, cpb, cnids = load_detrended_cheops()
@@ -44,11 +48,13 @@ class FinalLPF(PhaseCurveLPF):
         kt, kf, kcov, kpb, knids = load_croll_2015(downsampling=ds['croll'])
         st, sf, scov, spb, snids = load_spitzer(downsampling=ds['spitzer'], nleg=1)
 
-        # Store the H and Spitzer covariates for the GP model
-        # ---------------------------------------------------
+        # Store the H, Ks, and Spitzer covariates for the GP model
+        # --------------------------------------------------------
         self._gp_covs_h = hcov
+        self._gp_covs_ks = kcov
         self._gp_covs_spitzer = scov
         hcov = [array([[]]) for i in range(len(hcov))]
+        kcov = [array([[]]) for i in range(len(kcov))]
         scov = [array([[]]) for i in range(len(scov))]
 
         # Fix the noise IDs
@@ -77,12 +83,13 @@ class FinalLPF(PhaseCurveLPF):
 
         # Initialise the PhaseCurveLPF and add in a linear baseline model
         # ---------------------------------------------------------------
+        # We've removed all the covariates so the linear model will only
+        # add a constant baseline level for each light curve.
         name = f"03{self.scenario}_fin_{self.labels[self.scenario]}"
         super().__init__(name, pbs.categories.values, times, fluxes, pbids=pbs.codes, covariates=covs,
                          wnids=noise_ids, result_dir=savedir)
         self._add_baseline_model(LinearModelBaseline(self))
-        for p in self.ps[self._sl_lm]:
-            p.prior.std *= 3
+
 
     def _post_initialisation(self):
         super()._post_initialisation()
@@ -118,6 +125,20 @@ class FinalLPF(PhaseCurveLPF):
             self.set_prior(f'log10_ten_{pb}', 'UP', -3.0, 0.0)   # - Emission night-side flux ratio
             self.set_prior(f'teo_{pb}', 'NP', 0.0, radians(10))  # - Emission peak offset
         self.set_prior(f'log10_ten_TESS', 'UP', -5.0, 0.0)
+
+        # Set the GP hyperparameter prior
+        # -------------------------------
+        def set_gp_hp_priors(gp, sl):
+            for i, p in enumerate(self.ps[sl][:-1]):
+                if i == 0:
+                    log_output_scale = round(log(median([f.var() for f in gp.fluxes])), 2)
+                    self.set_prior(p.name, 'NP', log_output_scale, 1.5)
+                else:
+                    self.set_prior(p.name, 'NP', 1.0, 1.0)
+
+        set_gp_hp_priors(self._gp_h, self._sl_gp_H)
+        set_gp_hp_priors(self._gp_ks, self._sl_gp_Ks)
+        set_gp_hp_priors(self._gp_spitzer, self._sl_gp_Spitzer)
 
         # Force the H, and Ks band emission offset to zero
         # ------------------------------------------------
@@ -210,15 +231,18 @@ class FinalLPF(PhaseCurveLPF):
             k = self.fluxes[9].var() * ESK(metric=1, ndim=c[0].shape[1], axes=0)
             for i in range(1, c[0].shape[1]):
                 k *= ESK(metric=2, ndim=c[0].shape[1], axes=i)
-            self._add_lnlikelihood_model(GeorgeLogLikelihood(self, k, c, lcids=[9], name='gp_H'))
+            self._gp_h = GeorgeLogLikelihood(self, k, c, lcids=[9], name='gp_H')
+            self._add_lnlikelihood_model(self._gp_h)
 
             # CFHT Ks
-            self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[10], name='gp_Ks'))
+            k = self.fluxes[10].var() * ESK(metric=1, ndim=2, axes=0) * ESK(metric=1, ndim=2, axes=1)
+            self._gp_ks = GeorgeLogLikelihood(self, k, self._gp_covs_ks, lcids=[10], name='gp_Ks')
+            self._add_lnlikelihood_model(self._gp_ks)
 
             # Spitzer
             k = median([f.var() for f in self.fluxes[11:]]) * ESK(metric=1, ndim=2, axes=0) * ESK(metric=1, ndim=2, axes=1)
-            self._add_lnlikelihood_model(
-                GeorgeLogLikelihood(self, k, self._gp_covs_spitzer, lcids=[11, 12, 13, 14, 15, 16, 17, 18], name='gp_Spitzer'))
+            self._gp_spitzer = GeorgeLogLikelihood(self, k, self._gp_covs_spitzer, lcids=[11, 12, 13, 14, 15, 16, 17, 18], name='gp_Spitzer')
+            self._add_lnlikelihood_model(self._gp_spitzer)
 
 
     def lnposterior(self, pv):
