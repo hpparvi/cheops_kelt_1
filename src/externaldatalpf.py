@@ -66,16 +66,22 @@ class ExternalDataLPF(PhaseCurveLPF):
         knids += 1+hnids[-1]
         snids += 1+knids[-1]
 
-        self.ins = ['tess', 'h']
-
         times = tt + ht + kt + st
         fluxes = tf + hf + kf + sf
         covs = tcov + hcov + kcov + scov
         pbs = pd.Categorical(tpb + hpb + kpb + spb, categories=['TESS', 'H', 'Ks', '36um', '45um'])
-        noise_ids = concatenate([tnids, hnids, knids, snids]) #arange(len(times))
+        noise_ids = concatenate([tnids, hnids, knids, snids])
 
-        self.ins = pbs
-        self.piis = [0, 0, 0, 0, 1, 2, 3, 0, 1, 2, 3]
+        self.ins = array(pbs.categories.values)[pbs.codes]
+        self.piis, c = [], 0
+        ic = self.ins[0]
+        for ins in self.ins:
+            if ins == ic:
+                c += 1
+            else:
+                ic = ins
+                c = 0
+            self.piis.append(c)
 
         # Initialise the PhaseCurveLPF and add in a linear baseline model
         # ---------------------------------------------------------------

@@ -74,7 +74,6 @@ class FinalLPF(PhaseCurveLPF):
         noise_ids = concatenate([cnids, tnids, hnids, knids, snids])
 
         self.ins = array(pbs.categories.values)[pbs.codes]
-
         self.piis, c = [], 0
         ic = self.ins[0]
         for ins in self.ins:
