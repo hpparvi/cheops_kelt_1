@@ -136,9 +136,9 @@ class FinalLPF(PhaseCurveLPF):
                 else:
                     self.set_prior(p.name, 'NP', 1.0, 1.0)
 
-        set_gp_hp_priors(self._gp_h, self._sl_gp_H)
-        set_gp_hp_priors(self._gp_ks, self._sl_gp_Ks)
-        set_gp_hp_priors(self._gp_spitzer, self._sl_gp_Spitzer)
+        #set_gp_hp_priors(self._gp_h, self._sl_gp_H)
+        #set_gp_hp_priors(self._gp_ks, self._sl_gp_Ks)
+        #set_gp_hp_priors(self._gp_spitzer, self._sl_gp_Spitzer)
 
         # Force the H, and Ks band emission offset to zero
         # ------------------------------------------------
@@ -160,10 +160,10 @@ class FinalLPF(PhaseCurveLPF):
         self.set_prior('adb_36um',   'NP', ba['36um'],   2*be['36um'])
         self.set_prior('adb_45um',   'NP', ba['45um'],   2*be['45um'])
 
-        # Set a prior on the geometric albedo
-        # -----------------------------------
+        # Fix geometric albedo to zero
+        # ----------------------------
         for pb in self.passbands:
-            self.set_prior(f'ag_{pb}', 'UP', 0.0, 2.0)
+            self.set_prior(f'ag_{pb}', 'NP', 1e-4, 1e-6)
 
         # Set a prior on ellipsoidal variation
         # ------------------------------------
