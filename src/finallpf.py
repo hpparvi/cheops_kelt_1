@@ -136,6 +136,9 @@ class FinalLPF(PhaseCurveLPF):
                 else:
                     self.set_prior(p.name, 'NP', 1.0, 1.0)
 
+        self.set_prior('gp_TESS_ln_out', 'NP', round(log(self.fluxes[8].std()), 1), 1.0)
+        self.set_prior('gp_TESS_ln_in', 'NP', 1.0, 1.0)
+
         set_gp_hp_priors(self._gp_h, self._sl_gp_H)
         set_gp_hp_priors(self._gp_ks, self._sl_gp_Ks)
         set_gp_hp_priors(self._gp_spitzer, self._sl_gp_Spitzer)
