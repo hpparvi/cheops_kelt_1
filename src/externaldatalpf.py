@@ -170,7 +170,6 @@ class ExternalDataLPF(PhaseCurveLPF):
         # Nightside emission does not affect the results from the
         # passbands where we have only eclipse observations, so we
         # can safely fix the nightside amplitudes close to zero.
-        self.set_prior('log10_ten_CHEOPS', 'NP', -5, 0.01)
         self.set_prior('log10_ten_H', 'NP', -5, 0.01)
         self.set_prior('log10_ten_Ks', 'NP', -5, 0.01)
 
