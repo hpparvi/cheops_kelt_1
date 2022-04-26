@@ -126,8 +126,8 @@ class FinalLPF(PhaseCurveLPF):
             self.set_prior(f'teo_{pb}', 'NP', 0.0, radians(10))  # - Emission peak offset
         self.set_prior(f'log10_ten_TESS', 'UP', -5.0, 0.0)
 
-        # Set the GP hyperparameter prior
-        # -------------------------------
+        # Set the GP hyperparameter priors
+        # --------------------------------
         def set_gp_hp_priors(gp, sl):
             for i, p in enumerate(self.ps[sl][:-1]):
                 if i == 0:
@@ -136,16 +136,9 @@ class FinalLPF(PhaseCurveLPF):
                 else:
                     self.set_prior(p.name, 'NP', 1.0, 1.0)
 
-        #set_gp_hp_priors(self._gp_h, self._sl_gp_H)
-        #set_gp_hp_priors(self._gp_ks, self._sl_gp_Ks)
-        #set_gp_hp_priors(self._gp_spitzer, self._sl_gp_Spitzer)
-
-        # Force the H, and Ks band emission offset to zero
-        # ------------------------------------------------
-        # We do this because we don't have enough phase
-        # coverage to measure the offsets.
-        #self.set_prior('teo_H', 'NP', 0.0, 1e-5)
-        #self.set_prior('teo_Ks', 'NP', 0.0, 1e-5)
+        set_gp_hp_priors(self._gp_h, self._sl_gp_H)
+        set_gp_hp_priors(self._gp_ks, self._sl_gp_Ks)
+        set_gp_hp_priors(self._gp_spitzer, self._sl_gp_Spitzer)
 
         # Set priors on the Doppler beaming amplitudes
         # --------------------------------------------
