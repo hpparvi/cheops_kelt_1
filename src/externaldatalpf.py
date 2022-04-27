@@ -4,7 +4,7 @@ import pandas as pd
 import seaborn as sb
 from george.kernels import ExpSquaredKernel as ESK
 from matplotlib.pyplot import setp, subplots
-from numpy import radians, argsort, percentile, median, array, concatenate, squeeze
+from numpy import radians, argsort, percentile, median, array, concatenate, squeeze, log
 from numpy.random import permutation
 from pytransit import LinearModelBaseline, NormalPrior as NP
 from pytransit.lpf.loglikelihood import CeleriteLogLikelihood
@@ -35,6 +35,10 @@ class ExternalDataLPF(PhaseCurveLPF):
                        'b': 'emission_and_constrained_ev',
                        'c': 'emission_and_unconstrained_ev'}
 
+        self._sl_gp_Spitzer = None
+        self._sl_gp_Ks = None
+        self._sl_gp_H = None
+
         if scenario not in self.scenarios:
             raise ValueError(f'The JointLPF scenario has to be one of {self.scenarios}')
         self.scenario = scenario
@@ -52,8 +56,10 @@ class ExternalDataLPF(PhaseCurveLPF):
         # Store the H and Spitzer covariates for the GP model
         # ---------------------------------------------------
         self._gp_covs_h = hcov
+        self._gp_covs_ks = kcov
         self._gp_covs_spitzer = scov
         hcov = [array([[]]) for i in range(len(hcov))]
+        kcov = [array([[]]) for i in range(len(kcov))]
         scov = [array([[]]) for i in range(len(scov))]
 
         # Fix the noise IDs
@@ -116,12 +122,22 @@ class ExternalDataLPF(PhaseCurveLPF):
             self.set_prior(f'log10_ten_{pb}', 'UP', -4.0, 0.0)   # - Emission nightside flux ratio
             self.set_prior(f'teo_{pb}', 'NP', 0.0, radians(10))  # - Emission peak offset
 
-        # Force the H and Ks band emission offset to zero
-        # -----------------------------------------------
-        # We do this because we don't have enough phase
-        # coverage to measure the offsets.
-        #self.set_prior('teo_H', 'NP', 0.0, 1e-5)
-        #self.set_prior('teo_Ks', 'NP', 0.0, 1e-5)
+        # Set the GP hyperparameter priors
+        # --------------------------------
+        def set_gp_hp_priors(gp, sl):
+            for i, p in enumerate(self.ps[sl][:-1]):
+                if i == 0:
+                    log_output_scale = round(log(median([f.var() for f in gp.fluxes])), 2)
+                    self.set_prior(p.name, 'NP', log_output_scale, 1.5)
+                else:
+                    self.set_prior(p.name, 'NP', 1.0, 1.0)
+
+        self.set_prior('gp_TESS_ln_out', 'NP', round(log(self.fluxes[0].std()), 1), 1.0)
+        self.set_prior('gp_TESS_ln_in', 'NP', 1.0, 1.0)
+
+        set_gp_hp_priors(self._gp_h, self._sl_gp_H)
+        set_gp_hp_priors(self._gp_ks, self._sl_gp_Ks)
+        set_gp_hp_priors(self._gp_spitzer, self._sl_gp_Spitzer)
 
         # Set priors on the Doppler beaming amplitudes
         # --------------------------------------------
@@ -200,81 +216,19 @@ class ExternalDataLPF(PhaseCurveLPF):
         k = self.fluxes[1].var() * ESK(metric=1, ndim=c[0].shape[1], axes=0)
         for i in range(1, c[0].shape[1]):
             k *= ESK(metric=2, ndim=c[0].shape[1], axes=i)
-        self._add_lnlikelihood_model(GeorgeLogLikelihood(self, k, c, lcids=[1], name='gp_H'))
+        self._gp_h = GeorgeLogLikelihood(self, k, c, lcids=[1], name='gp_H')
+        self._add_lnlikelihood_model(self._gp_h)
 
         # CFHT Ks
-        # -------
-        self._add_lnlikelihood_model(CeleriteLogLikelihood(self, noise_ids=[2], name='gp_Ks'))
+        k = self.fluxes[10].var() * ESK(metric=1, ndim=2, axes=0) * ESK(metric=1, ndim=2, axes=1)
+        self._gp_ks = GeorgeLogLikelihood(self, k, self._gp_covs_ks, lcids=[2], name='gp_Ks')
+        self._add_lnlikelihood_model(self._gp_ks)
 
         # Spitzer
         # -------
         k = median([f.var() for f in self.fluxes[3:]]) * ESK(metric=1, ndim=2, axes=0) * ESK(metric=1, ndim=2, axes=1)
-        self._add_lnlikelihood_model(GeorgeLogLikelihood(self, k, self._gp_covs_spitzer, lcids=[3,4,5,6,7,8,9,10], name='gp_Spitzer'))
+        self._gp_spitzer = GeorgeLogLikelihood(self, k, self._gp_covs_spitzer, lcids=[3,4,5,6,7,8,9,10], name='gp_Spitzer')
+        self._add_lnlikelihood_model(self._gp_spitzer)
 
     def lnposterior(self, pv):
         return squeeze(super().lnposterior(pv))
-
-
-def plot_joint_lcs(lpf, method='de', pv=None):
-    yoff = 5e-3
-    yoffsets = (yoff * array([0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0])).cumsum()
-    colids = [0, 1, 1, 2, 3, 3, 3, 4, 5, 5, 5, 6]
-    poffset = [0, 1, 1, 0, 0, 0, 0, 0, 0, 0]
-
-    if pv is None:
-        if method == 'de':
-            pv = lpf.de.minimum_location.copy()
-        else:
-            pv = lpf.posterior_samples(derived_parameters=False)
-
-    if pv.ndim == 1:
-        t0, p = pv[[0, 1]]
-    else:
-        t0, p = median(pv[:, :2], 0)
-
-    fig, ax = subplots(figsize=(13, 12))
-
-    if pv.ndim == 1:
-        fm = lpf.transit_model(pv)
-        fmem, fmep = None, None
-        bl = lpf.baseline(pv)
-    else:
-        fp = percentile(lpf.transit_model(permutation(pv)[:100]), [50, 16, 84], axis=0)
-        fm, fmem, fmep = fp
-        bl = median(lpf.baseline(permutation(pv)[:100]), axis=0)
-
-    # TESS
-    sl = lpf.lcslices[0]
-    phase = fold(lpf.timea[sl], p, t0 + 0.18) + 0.18
-    sids = argsort(phase)
-    bp, bf, be = downsample_time_1d(phase[sids], (lpf.ofluxa[sl] / bl[sl])[sids], 10 / 60 / 24)
-    ax.plot(bp, bf + yoffsets[0], '.', c="C1", zorder=-1)
-    ax.plot(phase[sids], fm[sl][sids] + yoffsets[0], 'k-')
-
-    # LBT and Spitzer
-    for i, sl in enumerate(lpf.lcslices[1:]):
-        ep = epoch(lpf.timea[sl].mean(), t0, p)
-        tc = t0 + ep * p
-        ax.plot(lpf.timea[sl] - tc + poffset[i] * p, lpf.ofluxa[sl] / bl[sl] + yoffsets[i + 1], '.',
-                c=f"C{colids[i + 2]}")
-        ax.plot(lpf.timea[sl] - tc + poffset[i] * p, fm[sl] + yoffsets[i + 1], 'k')
-        if fmem is not None:
-            ax.fill_between(lpf.timea[sl] - tc + poffset[i] * p,
-                            fmem[sl] + yoffsets[i + 1],
-                            fmep[sl] + yoffsets[i + 1],
-                            fc=f"C{colids[i + 2]}", alpha=0.2)
-
-    ax.text(-0.1, 1.0 + 5 * yoff, 'Spitzer 4.5 $\mu$m (2019)', ha='right')
-    ax.text(0.42, 1.0 + 5 * yoff, 'Spitzer 4.5 $\mu$m (2014)', ha='right')
-    ax.text(-0.1, 1.0 + 3 * yoff, 'Spitzer 3.6 $\mu$m (2019)', ha='right')
-    ax.text(0.42, 1.0 + 3 * yoff, 'Spitzer 3.6 $\mu$m (2014)', ha='right')
-    ax.text(0.42, 1.0 + 2 * yoff, 'CFHT Ks', ha='right')
-    ax.text(0.42, 1.0 + 1 * yoff, 'LBT H', ha='right')
-    ax.text(0.42, 0.9985, 'TESS', ha='right')
-
-    setp(ax, xlim=(-0.75, 0.84), ylabel='Normalised flux')
-    setp(ax, xlabel='Time - t$_0$ [d]')
-
-    sb.despine(fig, offset=5)
-    fig.tight_layout()
-    return fig
