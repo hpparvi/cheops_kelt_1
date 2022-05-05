@@ -58,10 +58,13 @@ class GeorgeLogLikelihood:
         self.gp.set_parameter_vector(parameters[:-1])
         yerr = 10 ** parameters[-1]
         lnl = 0.0
-        for fobs, sl, covs in zip(self.fluxes, self.slices, self.covs):
-            self.gp.compute(covs, yerr=yerr)
-            lnl += self.gp.log_likelihood(fobs - model[sl])
-        return lnl
+        try:
+            for fobs, sl, covs in zip(self.fluxes, self.slices, self.covs):
+                self.gp.compute(covs, yerr=yerr)
+                lnl += self.gp.log_likelihood(fobs - model[sl])
+            return lnl
+        except (ValueError, ZeroDivisionError):
+            return -inf
 
     def predict_baseline(self, pv):
         parameters = pv[self.pv_slice]

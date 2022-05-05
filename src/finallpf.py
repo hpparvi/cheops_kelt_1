@@ -90,7 +90,11 @@ class FinalLPF(PhaseCurveLPF):
                          wnids=noise_ids, result_dir=savedir)
         self._add_baseline_model(LinearModelBaseline(self))
 
-
+        for p in self.ps:
+            if 'lm_i' in p.name and 'um_' in p.name:
+                self.set_prior(p.name, 'NP', 1.0, 0.01)
+                
+        
     def _post_initialisation(self):
         super()._post_initialisation()
         self.set_prior('tc', 'NP', zero_epoch.n, 0.01)         # - Zero epoch: normal prior with inflated uncertainty
@@ -115,7 +119,7 @@ class FinalLPF(PhaseCurveLPF):
         self.set_prior('q2_H',  'NP', 0.5, 0.001)
         self.set_prior('q1_Ks', 'NP', 0.5, 0.001)
         self.set_prior('q2_Ks', 'NP', 0.5, 0.001)
-
+        
         # Set the default phase curve priors
         # ----------------------------------
         self.set_prior('oev', 'NP', 0.0, 0.09)
