@@ -17,12 +17,11 @@ from src.kelt1 import (read_tw_lightcurve, read_mcmc, beaming_amplitudes as ba, 
 
 class CHEOPSLPF(PhaseCurveLPF):
     def __init__(self, scenario: str, savedir: Path = Path('results')):
-        self.scenarios = 'a b c d e'.split()
+        self.scenarios = 'a b c d'.split()
         self.labels = {'a': 'emission_and theoretical_ev',
                        'b': 'emission_and_constrained_ev',
                        'c': 'emission_and_unconstrained_ev',
-                       'd': 'emission_without_ev',
-                       'e': 'emission_and_reflection_theoretical_ev'}
+                       'd': 'emission_without_ev'}
 
         if scenario not in self.scenarios:
             raise ValueError(f'The JointLPF scenario has to be one of {self.scenarios}')
@@ -71,10 +70,6 @@ class CHEOPSLPF(PhaseCurveLPF):
         elif self.scenario == 'd':
             self.set_prior('aev_cheops', 'NP', 1e-9, 1e-11)
             self.set_prior('adb_cheops', 'NP', 1e-9, 1e-11)
-        elif self.scenario == 'e':
-            self.set_prior('aev_cheops', 'NP', eva['CHEOPS'].n, eva['CHEOPS'].s)
-            self.set_prior('ag_cheops', 'UP', 0.0, 1.0)
-
 
     def plot_folded_light_curve(self, figsize=None):
         pv = self.de.minimum_location
