@@ -8,7 +8,7 @@ from astropy.table import Table
 from astropy.coordinates import SkyCoord
 from matplotlib.pyplot import bar, axhline, subplots
 from numpy import sin, cos, diff, ones, median, argmin, array, arange, sqrt, concatenate, where, unique, histogram, std, \
-    exp, inf, pi, degrees, floor, log10
+    exp, inf, pi, degrees, floor, log10, cumsum, zeros, average
 from numpy.random import seed, normal, uniform
 from pytransit.orbits import as_from_rhop, i_from_ba, d_from_pkaiews
 from pytransit.utils import mp_from_kiepms
@@ -34,6 +34,17 @@ filters = (SVOFilter('CHEOPS/CHEOPS.band'), SVOFilter('TESS'),
            SVOFilter('Spitzer/IRAC.I1'), SVOFilter('Spitzer/IRAC.I2'))
 
 filter_names = "CHEOPS TESS H Ks 36um 45um".split()
+
+pbcenters = zeros(len(filters))
+pbbounds = zeros([len(filters), 2])
+
+for i,f in enumerate(filters):
+    ct = cumsum(f.transmission)
+    ct /= ct[-1]
+    imin = argmin(abs(ct-0.05))
+    imax = argmin(abs(ct-0.95))
+    pbcenters[i] = average(f.wavelength, weights=f.transmission)
+    pbbounds[i] = f.wavelength[[imin, imax]]
 
 mj2kg = u.M_jup.to(u.kg)
 ms2kg = u.M_sun.to(u.kg)
