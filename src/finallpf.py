@@ -207,18 +207,6 @@ class FinalLPF(PhaseCurveLPF):
         self.set_prior('log10_ten_H', 'NP', -5, 0.01)
         self.set_prior('log10_ten_Ks', 'NP', -5, 0.01)
 
-        # Force hot spot offsets close to similar values
-        # ----------------------------------------------
-        #pr_emission_offset_difference = NP(0.0, 0.07)
-        #def emission_offset(pvp):
-        #    eo_mean = pvp[:, [12, 18, 24, 30, 36, 42]].mean()
-        #    return (  pr_emission_offset_difference.logpdf(pvp[:, 12] - eo_mean)
-        #            + pr_emission_offset_difference.logpdf(pvp[:, 18] - eo_mean)
-        #            + pr_emission_offset_difference.logpdf(pvp[:, 24] - eo_mean)
-        #            + pr_emission_offset_difference.logpdf(pvp[:, 30] - eo_mean)
-        #            + pr_emission_offset_difference.logpdf(pvp[:, 36] - eo_mean)
-        #            + pr_emission_offset_difference.logpdf(pvp[:, 42] - eo_mean))
-        #self.add_prior(emission_offset)
 
     # Define the log likelihoods
     # --------------------------
