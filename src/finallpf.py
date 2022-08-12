@@ -127,9 +127,14 @@ class FinalLPF(PhaseCurveLPF):
             self.set_prior(f'aev_{pb}', 'UP', 0.0, 1000e-6)      # - Ellipsoidal variation
             self.set_prior(f'log10_ted_{pb}', 'UP', -3.0, 0.0)   # - Emission day-side flux ratio
             self.set_prior(f'log10_ten_{pb}', 'UP', -3.0, 0.0)   # - Emission night-side flux ratio
-            self.set_prior(f'teo_{pb}', 'NP', 0.0, radians(10))  # - Emission peak offset
+            self.set_prior(f'teo_{pb}', 'NP', 0.0, radians(2))  # - Emission peak offset
         self.set_prior(f'log10_ten_TESS', 'UP', -5.0, 0.0)
 
+        self.set_prior('teo_TESS', 'NP', 0.0, radians(10))  # - Emission peak offset
+        self.set_prior('teo_36um', 'NP', 0.0, radians(10))  # - Emission peak offset
+        self.set_prior('teo_45um', 'NP', 0.0, radians(10))  # - Emission peak offset
+
+        
         # Set the GP hyperparameter priors
         # --------------------------------
         def set_gp_hp_priors(gp, sl):
@@ -204,16 +209,16 @@ class FinalLPF(PhaseCurveLPF):
 
         # Force hot spot offsets close to similar values
         # ----------------------------------------------
-        pr_emission_offset_difference = NP(0.0, 0.07)
-        def emission_offset(pvp):
-            eo_mean = pvp[:, [12, 18, 24, 30, 36, 42]].mean()
-            return (  pr_emission_offset_difference.logpdf(pvp[:, 12] - eo_mean)
-                    + pr_emission_offset_difference.logpdf(pvp[:, 18] - eo_mean)
-                    + pr_emission_offset_difference.logpdf(pvp[:, 24] - eo_mean)
-                    + pr_emission_offset_difference.logpdf(pvp[:, 30] - eo_mean)
-                    + pr_emission_offset_difference.logpdf(pvp[:, 36] - eo_mean)
-                    + pr_emission_offset_difference.logpdf(pvp[:, 42] - eo_mean))
-        self.add_prior(emission_offset)
+        #pr_emission_offset_difference = NP(0.0, 0.07)
+        #def emission_offset(pvp):
+        #    eo_mean = pvp[:, [12, 18, 24, 30, 36, 42]].mean()
+        #    return (  pr_emission_offset_difference.logpdf(pvp[:, 12] - eo_mean)
+        #            + pr_emission_offset_difference.logpdf(pvp[:, 18] - eo_mean)
+        #            + pr_emission_offset_difference.logpdf(pvp[:, 24] - eo_mean)
+        #            + pr_emission_offset_difference.logpdf(pvp[:, 30] - eo_mean)
+        #            + pr_emission_offset_difference.logpdf(pvp[:, 36] - eo_mean)
+        #            + pr_emission_offset_difference.logpdf(pvp[:, 42] - eo_mean))
+        #self.add_prior(emission_offset)
 
     # Define the log likelihoods
     # --------------------------
